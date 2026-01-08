@@ -66,7 +66,7 @@ async def main():
     agent = ChainLite.load_config_from_yaml("agent.yaml")
     
     # Run a simple query
-    response = await agent.run({"input": "Hello! Who are you?"})
+    response = await agent.arun({"input": "Hello! Who are you?"})
     print(response)
 
     # Streaming example
