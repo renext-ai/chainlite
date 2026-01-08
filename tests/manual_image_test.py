@@ -1,0 +1,74 @@
+import os
+import asyncio
+from dotenv import load_dotenv
+from chainlite import ChainLite, ChainLiteConfig
+from loguru import logger
+
+# Load environment variables (API keys)
+load_dotenv()
+
+async def test_local_file():
+    print(f"--- Manual Local Image Test ---")
+    config = ChainLiteConfig(
+        llm_model_name="openai:gpt-4o",
+        temperature=0.7,
+        max_retries=1
+    )
+    agent = ChainLite(config)
+    image_path = "tests/test.png"
+    prompt_text = "請描述這張圖片"
+    
+    print(f"Image: {image_path}")
+    print(f"Prompt: {prompt_text}")
+    
+    if not os.path.exists(image_path):
+        logger.error(f"Image file not found: {image_path}")
+        return
+
+    try:
+        input_data = {
+            "input": prompt_text,
+            "images": [image_path]
+        }
+        result = await agent.arun(input_data)
+        print("\n[Agent Response]:")
+        print(result)
+    except Exception as e:
+        logger.error(f"Run failed: {e}")
+
+async def test_base64_image():
+    print(f"\n--- Manual Base64 Image Test ---")
+    config = ChainLiteConfig(
+        llm_model_name="openai:gpt-4o",
+        temperature=0.7,
+        max_retries=1
+    )
+    agent = ChainLite(config)
+
+    # PLACEHOLDER: Paste your base64 string here (e.g. "data:image/png;base64,.....")
+    base64_str = "data:image/png;base64,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"
+    
+    prompt_text = "請描述這張圖片"
+    print(f"Prompt: {prompt_text}")
+
+    if base64_str == "INSERT_YOUR_BASE64_HERE":
+        print("Skipping Base64 test: No base64 string provided.")
+        return
+
+    try:
+        input_data = {
+            "input": prompt_text,
+            "images": [base64_str]
+        }
+        result = await agent.arun(input_data)
+        print("\n[Agent Response]:")
+        print(result)
+    except Exception as e:
+        logger.error(f"Run failed: {e}")
+
+async def main():
+    await test_local_file()
+    await test_base64_image()
+
+if __name__ == "__main__":
+    asyncio.run(main())

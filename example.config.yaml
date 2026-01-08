@@ -1,0 +1,77 @@
+# --------------------------------------------------------------------------
+# ChainLite Example Configuration
+# --------------------------------------------------------------------------
+# This file provides a comprehensive example of all available configuration
+# options for ChainLite (Pydantic AI version).
+# --------------------------------------------------------------------------
+
+# The identifier string for the machine learning model.
+# It MUST be prefixed with a provider name.
+# Supported providers and example models:
+#   - openai: gpt-4, gpt-3.5-turbo, gpt-4-turbo
+#   - anthropic: claude-3-opus, claude-3-sonnet, claude-3-haiku
+#   - google-gemini: gemini-pro, gemini-1.5-pro
+#   - google-vertexai: gemini-pro (via Vertex AI)
+#   - mistralai: mistral-large, mistral-medium, mistral-small
+#   - ollama: llama2, mistral, codellama
+llm_model_name: "openai:gpt-4"
+
+# (Optional) The system prompt provides context or instructions to the model.
+# It sets the persona or behavior of the assistant.
+# system_prompt: "You are a helpful assistant that translates English to French."
+
+# (Optional) The user prompt template.
+# You can use placeholders like {variable} which must be provided when running the chain.
+# If not provided, it defaults to "{input}".
+# prompt: "Translate the following text: {text_to_translate}"
+
+# (Optional) The randomness of the model's response (0.0 to 2.0).
+# Higher values like 0.8 make the output more random, while lower values
+# like 0.2 make it more deterministic. Defaults to the provider's default.
+# temperature: 0.7
+
+
+# (Optional) The maximum number of retries for a failed operation.
+# Defaults to 3.
+# max_retries: 5
+
+# --------------------------------------------------------------------------
+# Output Parsing (Structured Output)
+# --------------------------------------------------------------------------
+# (Optional) Define a structure for the model's output.
+# Pydantic AI natively supports structured output using Pydantic models.
+# The 'type' can be: str, int, float, bool, Dict[str, Any], List[str], etc.
+# output_parser:
+#   - translated_text:
+#       - type: "str"
+#         description: "The translated text in French."
+#   - original_language:
+#       - type: "str"
+#         description: "The detected language of the original text."
+
+# --------------------------------------------------------------------------
+# Conversation History
+# --------------------------------------------------------------------------
+# (Optional) Enable conversation history to allow for multi-turn conversations.
+# use_history: true
+
+# (Optional) A unique identifier for the conversation session.
+# Required if use_history is true.
+# session_id: "user123-session456"
+
+# (Optional) URL for a Redis server to persist conversation history.
+# If not provided, history will be stored in-memory and lost on restart.
+# redis_url: "redis://localhost:6379/0"
+
+# --------------------------------------------------------------------------
+# Provider-Specific Settings
+# --------------------------------------------------------------------------
+# (Optional) Region, required for some providers like Google Vertex AI.
+# region: "us-central1"
+
+# --------------------------------------------------------------------------
+# Metadata
+# --------------------------------------------------------------------------
+# (Optional) A name or identifier for this specific configuration.
+# This is useful for logging when you are managing multiple configurations.
+# config_name: "translation_chain_config"

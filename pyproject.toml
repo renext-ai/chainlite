@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[project]
+name = "chainlite"
+version = "0.1.0"
+description = "A lightweight chain utility"
+authors = [
+  { name="Aiden Pearce", email="aiden@example.com" }
+]
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.8"
+dependencies = [
+  "pydantic-ai>=0.1.0",
+  "pydantic-ai-slim[openai,anthropic,google,mistral]>=0.1.0",
+  "pydantic>=2.0.0",
+  "httpx>=0.27.0",
+  "loguru>=0.7.0",
+  "pyyaml>=6.0",
+  "redis>=5.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/aidenpearce/chainlite"
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["osx-arm64"]
+
+[tool.pixi.pypi-dependencies]
+chainlite = { path = ".", editable = true }
+
+[tool.pixi.tasks]
+
+[tool.pixi.dependencies]
+python = ">=3.9"
+pytest = ">=9.0.2,<10"
+pytest-asyncio = ">=1.3.0,<2"
