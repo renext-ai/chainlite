@@ -78,6 +78,36 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+### Structured Output with YAML
+
+You can define a schema for structured output directly in your YAML configuration using `output_parser`. This allows you to extract specific information from the model's response.
+
+Create a config file `structured_agent.yaml`:
+
+```yaml
+config_name: "extractor"
+llm_model_name: "openai:gpt-3.5-turbo"
+system_prompt: "You are a helpful assistant that extracts information."
+prompt: "Extract the name and age from this text: {text}"
+output_parser:
+  - name: "The name of the person."
+  - age:
+      - type: "int"
+        description: "The age of the person."
+```
+
+Run it in Python:
+
+```python
+async def main():
+    agent = ChainLite.load_config_from_yaml("structured_agent.yaml")
+    
+    # The response will be a dictionary matching the schema
+    response = await agent.arun({"text": "John Doe is 30 years old."})
+    print(response)
+    # Output: {'name': 'John Doe', 'age': 30}
+```
+
 ### Python Class Usage
 
 You can also initialize `ChainLite` directly with a configuration object:
