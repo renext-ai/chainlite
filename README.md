@@ -123,7 +123,7 @@ config = ChainLiteConfig(
 )
 
 chain = ChainLite(config=config)
-result = chain.run_sync({"problem": "What is the square root of 144?"})
+result = chain.run({"problem": "What is the square root of 144?"})
 print(result)
 ```
 
@@ -142,6 +142,7 @@ The `ChainLiteConfig` support the following key parameters:
 | `temperature` | `float` | Sampling temperature (0.0 to 1.0). |
 | `max_tokens` | `int` | Maximum tokens to generate. |
 | `retries` | `int` | Number of retries for failed requests. |
+| `output_parser` | `List[str]` | Schema definition for structured output extraction. |
 
 ## Development
 
