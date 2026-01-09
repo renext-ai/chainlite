@@ -90,7 +90,7 @@ async def test_structured_output():
     try:
         structured_config = ChainLiteConfig(
             llm_model_name="openai:gpt-3.5-turbo",
-            prompt="Tell me a joke about {topic}",
+            prompt="Tell me a joke about {{ topic }}",
             temperature=0.7,
             output_parser=[
                 {"setup": "The setup of the joke"},

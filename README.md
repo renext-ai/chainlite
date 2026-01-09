@@ -43,7 +43,7 @@ Create a config file `agent.yaml`:
 config_name: "my_assistant"
 llm_model_name: "openai:gpt-3.5-turbo"  # or "anthropic:claude-3-sonnet-20240229", "ollama:llama3"
 system_prompt: "You are a helpful assistant."
-prompt: "{input}"
+prompt: "{{ input }}"
 temperature: 0.7
 use_history: true
 session_id: "my_session"
@@ -88,7 +88,7 @@ Create a config file `structured_agent.yaml`:
 config_name: "extractor"
 llm_model_name: "openai:gpt-3.5-turbo"
 system_prompt: "You are a helpful assistant that extracts information."
-prompt: "Extract the name and age from this text: {text}"
+prompt: "Extract the name and age from this text: {{ text }}"
 output_parser:
   - name: "The name of the person."
   - age:
@@ -118,7 +118,7 @@ from chainlite import ChainLite, ChainLiteConfig
 config = ChainLiteConfig(
     llm_model_name="openai:gpt-4",
     system_prompt="You are a mathematics tutor.",
-    prompt="Solve this problem: {problem}",
+    prompt="Solve this problem: {{ problem }}",
     temperature=0.2
 )
 
@@ -135,7 +135,7 @@ The `ChainLiteConfig` support the following key parameters:
 |-----------|------|-------------|
 | `llm_model_name` | `str` | The model identifier (e.g., `openai:gpt-4`, `ollama:llama3`). |
 | `system_prompt` | `str` | The system instruction for the LLM. |
-| `prompt` | `str` | The user prompt template. Supports `{variable}` interpolation. |
+| `prompt` | `str` | The user prompt template. Supports `{{ variable }}` interpolation. |
 | `use_history` | `bool` | Enable conversation history tracking. |
 | `session_id` | `str` | Unique ID for the conversation session (required if `use_history=True`). |
 | `redis_url` | `str` | URL for Redis instance to persist history. |

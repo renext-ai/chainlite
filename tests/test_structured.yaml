@@ -1,6 +1,6 @@
-llm_model_name: "openai:gpt-3.5-turbo"
+llm_model_name: "openai:gpt-4o"
 system_prompt: "You are a helpful assistant that extracts information."
-prompt: "Extract the name and age from this text: {text}"
+prompt: "Extract the name and age from this text: {{ text }}"
 output_parser:
   - name: "The name of the person."
   - age:

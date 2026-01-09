@@ -9,7 +9,9 @@ from pydantic_ai import ImageUrl, BinaryContent
 
 @mock.patch.dict(os.environ, {"OPENAI_API_KEY": "dummy"})
 def test_build_prompt_text_only():
-    config = ChainLiteConfig(llm_model_name="openai:test-model", prompt="Hello {input}")
+    config = ChainLiteConfig(
+        llm_model_name="openai:test-model", prompt="Hello {{input}}"
+    )
     chain = ChainLite(config)
     input_data = {"input": "World"}
 
@@ -21,7 +23,7 @@ def test_build_prompt_text_only():
 @mock.patch.dict(os.environ, {"OPENAI_API_KEY": "dummy"})
 def test_build_prompt_with_image_url():
     config = ChainLiteConfig(
-        llm_model_name="openai:test-model", prompt="Describe {input}"
+        llm_model_name="openai:test-model", prompt="Describe {{input}}"
     )
     chain = ChainLite(config)
     input_data = {"input": "this image", "image_url": "https://example.com/test.png"}
@@ -36,7 +38,9 @@ def test_build_prompt_with_image_url():
 
 @mock.patch.dict(os.environ, {"OPENAI_API_KEY": "dummy"})
 def test_build_prompt_with_empty_image_url():
-    config = ChainLiteConfig(llm_model_name="openai:test-model", prompt="Hello {input}")
+    config = ChainLiteConfig(
+        llm_model_name="openai:test-model", prompt="Hello {{input}}"
+    )
     chain = ChainLite(config)
     input_data = {"input": "World", "image_url": None}
 
@@ -48,7 +52,7 @@ def test_build_prompt_with_empty_image_url():
 @mock.patch.dict(os.environ, {"OPENAI_API_KEY": "dummy"})
 def test_build_prompt_with_local_file():
     config = ChainLiteConfig(
-        llm_model_name="openai:test-model", prompt="Analyze {input}"
+        llm_model_name="openai:test-model", prompt="Analyze {{input}}"
     )
     chain = ChainLite(config)
 

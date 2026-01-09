@@ -17,6 +17,8 @@ import mimetypes
 from loguru import logger
 import yaml
 from pydantic import BaseModel, create_model, Field, TypeAdapter
+import jinja2
+from jinja2 import meta
 
 from pydantic_ai import Agent, BinaryContent, ImageUrl
 from pydantic_ai.messages import ModelMessage
@@ -173,12 +175,14 @@ class ChainLite:
         self, input_data: dict
     ) -> Union[str, list[Union[str, BinaryContent, ImageUrl]]]:
         """Build the user prompt from template and input data."""
-        prompt_template = self.config.prompt or "{input}"
+        prompt_template = self.config.prompt or "{{ input }}"
 
         try:
-            prompt_str = prompt_template.format(**input_data)
-        except KeyError as e:
-            logger.warning(f"Missing key in prompt formatting: {e}")
+            # Create a Jinja2 template and render it with the input data
+            template = jinja2.Template(prompt_template)
+            prompt_str = template.render(**input_data)
+        except Exception as e:
+            logger.warning(f"Error in prompt formatting: {e}")
             raise e
 
         content_list = [prompt_str]
@@ -384,8 +388,14 @@ class ChainLite:
         if not isinstance(text, str):
             return []
 
-        input_variables = re.findall(r"(?<!\{)\{([^{}]+)\}(?!\})", text)
-        return input_variables
+        env = jinja2.Environment()
+        try:
+            ast = env.parse(text)
+            input_variables = meta.find_undeclared_variables(ast)
+            return list(input_variables)
+        except Exception as e:
+            logger.error(f"Failed to parse input variables: {e}")
+            return []
 
     @staticmethod
     def create_dynamic_pydantic_model(data: Dict[str, Any]) -> type[BaseModel]:

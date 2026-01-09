@@ -1,5 +1,5 @@
 llm_model_name: "openai:gpt-3.5-turbo"
 system_prompt: "You are a poetic assistant."
-prompt: "Write a short poem about {topic}."
+prompt: "Write a short poem about {{ topic }}."
 temperature: 0.8
 config_name: "poetic_test"

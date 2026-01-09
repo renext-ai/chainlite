@@ -9,7 +9,7 @@ from pydantic_ai import ImageUrl, BinaryContent
 @mock.patch.dict(os.environ, {"OPENAI_API_KEY": "dummy"})
 def test_multiple_images_urls():
     config = ChainLiteConfig(
-        llm_model_name="openai:test-model", prompt="Describe these images {input}"
+        llm_model_name="openai:test-model", prompt="Describe these images {{input}}"
     )
     chain = ChainLite(config)
     input_data = {
@@ -30,7 +30,7 @@ def test_multiple_images_urls():
 @mock.patch.dict(os.environ, {"OPENAI_API_KEY": "dummy"})
 def test_base64_image():
     config = ChainLiteConfig(
-        llm_model_name="openai:test-model", prompt="Describe {input}"
+        llm_model_name="openai:test-model", prompt="Describe {{input}}"
     )
     chain = ChainLite(config)
     # Tiny base64 gif
@@ -53,7 +53,7 @@ def test_base64_image():
 @mock.patch.dict(os.environ, {"OPENAI_API_KEY": "dummy"})
 def test_local_and_remote_mix():
     config = ChainLiteConfig(
-        llm_model_name="openai:test-model", prompt="Compare {input}"
+        llm_model_name="openai:test-model", prompt="Compare {{input}}"
     )
     chain = ChainLite(config)
 
