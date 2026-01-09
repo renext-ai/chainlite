@@ -33,3 +33,53 @@ async def main():
     response = await chain.arun({"input": "What's the weather in Taipei?"})
     print(response)
 ```
+
+### Injecting Dependencies (Deps)
+
+ChainLite fully supports `pydantic-ai`'s dependency injection system, allowing you to pass runtime context (like user info, database connections, or request metadata) into your tools safely and transparently.
+
+**1. Define your Dependencies:**
+You can use any Python type, but `dataclasses` or Pydantic models are recommended.
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class UserContext:
+    username: str
+    user_id: int
+    location: str
+```
+
+**2. Register Tools that use Deps:**
+Annotate the `ctx` argument with `RunContext[YourDepType]`.
+
+```python
+from pydantic_ai import RunContext
+
+@chain.agent.tool
+def get_user_info(ctx: RunContext[UserContext]) -> str:
+    """Get information about the current user from deps."""
+    return f"User: {ctx.deps.username} (ID: {ctx.deps.user_id})"
+
+@chain.agent.tool
+def get_local_weather(ctx: RunContext[UserContext]) -> str:
+    """Get weather for the user's location."""
+    # Access runtime dependency
+    loc = ctx.deps.location
+    return f"Weather in {loc} is Rainy."
+```
+
+**3. Pass Deps at Runtime:**
+Pass the `deps` argument when calling `run`, `arun`, `stream`, or `astream`.
+
+```python
+current_user = UserContext(username="Alice", user_id=123, location="London")
+
+# The agent can now use tools that access 'current_user'
+response = await chain.arun(
+    {"input": "Who am I and what is the weather here?"},
+    deps=current_user
+)
+print(response)
+```

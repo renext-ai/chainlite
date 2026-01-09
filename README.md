@@ -131,6 +131,12 @@ result = chain.run({"problem": "What is the square root of 144?"})
 print(result)
 ```
 
+## Tools & Dependencies
+
+ChainLite integrates seamlessly with **Pydantic AI**'s tool system and dependency injection. You can define Python functions as tools and access runtime dependencies (like User Context, Database sessions) directly within them.
+
+For detailed usage and examples of how to bind tools and inject dependencies, please refer to [docs/tools.md](docs/tools.md).
+
 ## Configuration Reference
 
 The `ChainLiteConfig` support the following key parameters:
