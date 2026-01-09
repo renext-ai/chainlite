@@ -1,34 +1,35 @@
 import os
 import tempfile
 from unittest import mock
-
-# import pytest removed
+import pytest
 from chainlite import ChainLite, ChainLiteConfig
 from pydantic_ai import ImageUrl, BinaryContent
 
 
+@pytest.mark.asyncio
 @mock.patch.dict(os.environ, {"OPENAI_API_KEY": "dummy"})
-def test_build_prompt_text_only():
+async def test_build_prompt_text_only():
     config = ChainLiteConfig(
         llm_model_name="openai:test-model", prompt="Hello {{input}}"
     )
     chain = ChainLite(config)
     input_data = {"input": "World"}
 
-    prompt = chain._build_prompt(input_data)
+    prompt = await chain._build_prompt(input_data)
     assert prompt == "Hello World"
     assert isinstance(prompt, str)
 
 
+@pytest.mark.asyncio
 @mock.patch.dict(os.environ, {"OPENAI_API_KEY": "dummy"})
-def test_build_prompt_with_image_url():
+async def test_build_prompt_with_image_url():
     config = ChainLiteConfig(
         llm_model_name="openai:test-model", prompt="Describe {{input}}"
     )
     chain = ChainLite(config)
     input_data = {"input": "this image", "image_url": "https://example.com/test.png"}
 
-    prompt = chain._build_prompt(input_data)
+    prompt = await chain._build_prompt(input_data)
     assert isinstance(prompt, list)
     assert len(prompt) == 2
     assert prompt[0] == "Describe this image"
@@ -36,21 +37,23 @@ def test_build_prompt_with_image_url():
     assert prompt[1].url == "https://example.com/test.png"
 
 
+@pytest.mark.asyncio
 @mock.patch.dict(os.environ, {"OPENAI_API_KEY": "dummy"})
-def test_build_prompt_with_empty_image_url():
+async def test_build_prompt_with_empty_image_url():
     config = ChainLiteConfig(
         llm_model_name="openai:test-model", prompt="Hello {{input}}"
     )
     chain = ChainLite(config)
     input_data = {"input": "World", "image_url": None}
 
-    prompt = chain._build_prompt(input_data)
+    prompt = await chain._build_prompt(input_data)
     assert prompt == "Hello World"
     assert isinstance(prompt, str)
 
 
+@pytest.mark.asyncio
 @mock.patch.dict(os.environ, {"OPENAI_API_KEY": "dummy"})
-def test_build_prompt_with_local_file():
+async def test_build_prompt_with_local_file():
     config = ChainLiteConfig(
         llm_model_name="openai:test-model", prompt="Analyze {{input}}"
     )
@@ -64,7 +67,7 @@ def test_build_prompt_with_local_file():
     try:
         input_data = {"input": "file", "image_url": tmp_path}
 
-        prompt = chain._build_prompt(input_data)
+        prompt = await chain._build_prompt(input_data)
         assert isinstance(prompt, list)
         assert len(prompt) == 2
         assert prompt[0] == "Analyze file"
@@ -78,18 +81,3 @@ def test_build_prompt_with_local_file():
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
-
-
-if __name__ == "__main__":
-    try:
-        test_build_prompt_text_only()
-        test_build_prompt_with_image_url()
-        test_build_prompt_with_empty_image_url()
-        test_build_prompt_with_local_file()
-        print("All tests passed!")
-    except Exception as e:
-        print(f"Test failed: {e}")
-        import traceback
-
-        traceback.print_exc()
-        exit(1)

@@ -127,7 +127,11 @@ class ChainLite:
             return "\n\n".join(parts)
         return None
 
-    def _process_media_item(self, item: Any) -> Union[ImageUrl, BinaryContent, str]:
+        return str(item)
+
+    async def _process_media_item(
+        self, item: Any
+    ) -> Union[ImageUrl, BinaryContent, str]:
         """
         Process a media item (URL, path, or key) into a Pydantic AI compatible format.
         """
@@ -159,8 +163,12 @@ class ChainLite:
                 if not mime_type:
                     mime_type = "image/jpeg"
                 try:
-                    with open(item, "rb") as f:
-                        file_data = f.read()
+
+                    def _read():
+                        with open(item, "rb") as f:
+                            return f.read()
+
+                    file_data = await asyncio.to_thread(_read)
                     return BinaryContent(data=file_data, media_type=mime_type)
                 except Exception as e:
                     logger.warning(f"Failed to read local file {item}: {e}")
@@ -171,7 +179,7 @@ class ChainLite:
 
         return str(item)
 
-    def _build_prompt(
+    async def _build_prompt(
         self, input_data: dict
     ) -> Union[str, list[Union[str, BinaryContent, ImageUrl]]]:
         """Build the user prompt from template and input data."""
@@ -191,12 +199,12 @@ class ChainLite:
         images = input_data.get("images")
         if images and isinstance(images, list):
             for img in images:
-                content_list.append(self._process_media_item(img))
+                content_list.append(await self._process_media_item(img))
 
         # 2. Check legacy 'image_url' input
         image_url = input_data.get("image_url")
         if image_url:
-            content_list.append(self._process_media_item(image_url))
+            content_list.append(await self._process_media_item(image_url))
 
         if len(content_list) > 1:
             return content_list
@@ -216,7 +224,7 @@ class ChainLite:
         if self.history_manager:
             self.history_manager.add_messages(new_messages)
 
-    def _prepare_run(self, input_data: dict) -> tuple[
+    async def _prepare_run(self, input_data: dict) -> tuple[
         Union[str, list[Union[str, BinaryContent, ImageUrl]]],
         Optional[List[ModelMessage]],
     ]:
@@ -225,7 +233,7 @@ class ChainLite:
             raise ValueError(
                 "Agent is not set up. Please call `setup_chain` method before running."
             )
-        prompt = self._build_prompt(input_data)
+        prompt = await self._build_prompt(input_data)
         message_history = self._get_message_history()
         return prompt, message_history
 
@@ -262,7 +270,7 @@ class ChainLite:
         Returns:
             The response from the language model, either as string or structured data.
         """
-        prompt, message_history = self._prepare_run(input_data)
+        prompt, message_history = asyncio.run(self._prepare_run(input_data))
 
         max_retries = self.config.max_retries or 3
         current_try = 0
@@ -296,7 +304,7 @@ class ChainLite:
         Returns:
             The response from the language model, either as string or structured data.
         """
-        prompt, message_history = self._prepare_run(input_data)
+        prompt, message_history = await self._prepare_run(input_data)
 
         max_retries = self.config.max_retries or 3
         current_try = 0
@@ -331,7 +339,7 @@ class ChainLite:
         Yields:
             Text chunks from the streaming response.
         """
-        prompt = self._build_prompt(input_data)
+        prompt = asyncio.run(self._build_prompt(input_data))
         message_history = self._get_message_history()
 
         result = self.agent.run_stream_sync(
@@ -356,7 +364,7 @@ class ChainLite:
         Yields:
             Text chunks from the streaming response.
         """
-        prompt = self._build_prompt(input_data)
+        prompt = await self._build_prompt(input_data)
         message_history = self._get_message_history()
 
         async with self.agent.run_stream(

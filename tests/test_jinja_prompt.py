@@ -5,44 +5,48 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def test_jinja2_basic_interpolation():
+@pytest.mark.asyncio
+async def test_jinja2_basic_interpolation():
     config = ChainLiteConfig(
         llm_model_name="openai:gpt-3.5-turbo",
         prompt="Hello {{ name }}!",
     )
     chain = ChainLite(config)
     # White-box testing _build_prompt to avoid making API calls
-    prompt = chain._build_prompt({"name": "World"})
+    prompt = await chain._build_prompt({"name": "World"})
     assert "Hello World!" in str(prompt)
 
 
-def test_jinja2_conditional():
+@pytest.mark.asyncio
+async def test_jinja2_conditional():
     config = ChainLiteConfig(
         llm_model_name="openai:gpt-3.5-turbo",
         prompt="{% if is_formal %}Good evening, {{ name }}.{% else %}Hi {{ name }}!{% endif %}",
     )
     chain = ChainLite(config)
 
-    prompt_formal = chain._build_prompt({"name": "Sir", "is_formal": True})
+    prompt_formal = await chain._build_prompt({"name": "Sir", "is_formal": True})
     assert "Good evening, Sir." in str(prompt_formal)
 
-    prompt_informal = chain._build_prompt({"name": "buddy", "is_formal": False})
+    prompt_informal = await chain._build_prompt({"name": "buddy", "is_formal": False})
     assert "Hi buddy!" in str(prompt_informal)
 
 
-def test_jinja2_loop():
+@pytest.mark.asyncio
+async def test_jinja2_loop():
     config = ChainLiteConfig(
         llm_model_name="openai:gpt-3.5-turbo",
         prompt="Items: {% for item in items %}- {{ item }}\n{% endfor %}",
     )
     chain = ChainLite(config)
 
-    prompt = chain._build_prompt({"items": ["Apple", "Banana"]})
+    prompt = await chain._build_prompt({"items": ["Apple", "Banana"]})
     assert "- Apple" in str(prompt)
     assert "- Banana" in str(prompt)
 
 
-def test_jinja2_missing_variable():
+@pytest.mark.asyncio
+async def test_jinja2_missing_variable():
     # Jinja2 default behavior is to print empty string for undefined variables unless configured otherwise.
     # We want to ensure it doesn't crash, or if we want it to crash, we check for that.
     # Current implementation uses default environment, which renders undefined as empty.
@@ -53,7 +57,7 @@ def test_jinja2_missing_variable():
     chain = ChainLite(config)
 
     # Passing empty dict
-    prompt = chain._build_prompt({})
+    prompt = await chain._build_prompt({})
     assert "Hello !" in str(prompt)
     # Notes: The previous implementation raised KeyError.
     # If strictness is required, we might need to change implementation.

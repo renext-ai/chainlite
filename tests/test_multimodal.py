@@ -2,12 +2,14 @@ import os
 import tempfile
 import base64
 from unittest import mock
+import pytest
 from chainlite import ChainLite, ChainLiteConfig
 from pydantic_ai import ImageUrl, BinaryContent
 
 
+@pytest.mark.asyncio
 @mock.patch.dict(os.environ, {"OPENAI_API_KEY": "dummy"})
-def test_multiple_images_urls():
+async def test_multiple_images_urls():
     config = ChainLiteConfig(
         llm_model_name="openai:test-model", prompt="Describe these images {{input}}"
     )
@@ -17,7 +19,7 @@ def test_multiple_images_urls():
         "images": ["https://example.com/1.png", "https://example.com/2.png"],
     }
 
-    prompt = chain._build_prompt(input_data)
+    prompt = await chain._build_prompt(input_data)
     assert isinstance(prompt, list)
     assert len(prompt) == 3
     assert prompt[0] == "Describe these images "
@@ -27,8 +29,9 @@ def test_multiple_images_urls():
     assert prompt[2].url == "https://example.com/2.png"
 
 
+@pytest.mark.asyncio
 @mock.patch.dict(os.environ, {"OPENAI_API_KEY": "dummy"})
-def test_base64_image():
+async def test_base64_image():
     config = ChainLiteConfig(
         llm_model_name="openai:test-model", prompt="Describe {{input}}"
     )
@@ -40,7 +43,7 @@ def test_base64_image():
 
     input_data = {"input": "this base64 image", "images": [b64_str]}
 
-    prompt = chain._build_prompt(input_data)
+    prompt = await chain._build_prompt(input_data)
     assert isinstance(prompt, list)
     assert len(prompt) == 2
     assert isinstance(prompt[1], BinaryContent)
@@ -50,8 +53,9 @@ def test_base64_image():
     )
 
 
+@pytest.mark.asyncio
 @mock.patch.dict(os.environ, {"OPENAI_API_KEY": "dummy"})
-def test_local_and_remote_mix():
+async def test_local_and_remote_mix():
     config = ChainLiteConfig(
         llm_model_name="openai:test-model", prompt="Compare {{input}}"
     )
@@ -67,7 +71,7 @@ def test_local_and_remote_mix():
             "images": [tmp_path, "https://example.com/remote.jpg"],
         }
 
-        prompt = chain._build_prompt(input_data)
+        prompt = await chain._build_prompt(input_data)
         assert len(prompt) == 3
         # First item is local file -> BinaryContent
         assert isinstance(prompt[1], BinaryContent)
@@ -80,21 +84,23 @@ def test_local_and_remote_mix():
             os.remove(tmp_path)
 
 
+@pytest.mark.asyncio
 @mock.patch.dict(os.environ, {"OPENAI_API_KEY": "dummy"})
-def test_legacy_image_url():
+async def test_legacy_image_url():
     config = ChainLiteConfig(llm_model_name="openai:test-model")
     chain = ChainLite(config)
 
     input_data = {"input": "legacy", "image_url": "https://example.com/legacy.png"}
 
-    prompt = chain._build_prompt(input_data)
+    prompt = await chain._build_prompt(input_data)
     assert len(prompt) == 2
     assert isinstance(prompt[1], ImageUrl)
     assert prompt[1].url == "https://example.com/legacy.png"
 
 
+@pytest.mark.asyncio
 @mock.patch.dict(os.environ, {"OPENAI_API_KEY": "dummy"})
-def test_legacy_and_new_mix():
+async def test_legacy_and_new_mix():
     # If both are present, they should be concatenated
     config = ChainLiteConfig(llm_model_name="openai:test-model")
     chain = ChainLite(config)
@@ -105,25 +111,9 @@ def test_legacy_and_new_mix():
         "images": ["https://example.com/new.png"],
     }
 
-    prompt = chain._build_prompt(input_data)
+    prompt = await chain._build_prompt(input_data)
     # prompt string + new image + legacy image
     assert len(prompt) == 3
     # Order depends on implementation: images list first, then legacy
     assert prompt[1].url == "https://example.com/new.png"
     assert prompt[2].url == "https://example.com/legacy.png"
-
-
-if __name__ == "__main__":
-    try:
-        test_multiple_images_urls()
-        test_base64_image()
-        test_local_and_remote_mix()
-        test_legacy_image_url()
-        test_legacy_and_new_mix()
-        print("All tests passed!")
-    except Exception as e:
-        print(f"Test failed: {e}")
-        import traceback
-
-        traceback.print_exc()
-        exit(1)
