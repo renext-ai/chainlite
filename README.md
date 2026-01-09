@@ -5,17 +5,18 @@ ChainLite is a lightweight, configuration-driven utility for building LLM-powere
 
 - **Multi-Provider Support**: Seamlessly switch between OpenAI, Anthropic, Google Vertex/Gemini, Mistral, and Ollama.
 - **YAML Configuration**: Define your agent's behavior, model parameters, and prompts in simple YAML files.
+- **Advanced Templating**: Full support for **Jinja2** templating in prompts, enabling complex logic (conditionals, loops) directly in your configuration.
 - **Conversation History**: Built-in support for persistent conversation history using Redis, with automatic session management.
 - **Streaming Support**: Real-time response streaming with `astream`.
 - **Structured Outputs**: Easy integration with Pydantic models for structured data extraction.
-- **Async First**: Built on top of `asyncio` for high-performance applications.
+- **Async First**: Built on top of `asyncio` for high-performance applications, featuring non-blocking I/O for media processing.
 
 ## Installation
 
 Since ChainLite is not currently published on PyPI, you can install it directly from the source.
 
 ### Prerequisites
-- Python 3.8+
+- Python 3.9+
 - (Optional) Redis server for persistent history
 
 ### Install from Source
@@ -51,6 +52,9 @@ session_id: "my_session"
 ```
 
 Run it in Python:
+> **Note for Jupyter Notebook / Interactive Users:**
+> If you are running this in a Jupyter Notebook, IPython, or Streamlit, the event loop is already running. Do not use `asyncio.run()`. Instead, use `await agent.arun(...)` directly.
+
 
 ```python
 import asyncio
@@ -135,7 +139,7 @@ The `ChainLiteConfig` support the following key parameters:
 |-----------|------|-------------|
 | `llm_model_name` | `str` | The model identifier (e.g., `openai:gpt-4`, `ollama:llama3`). |
 | `system_prompt` | `str` | The system instruction for the LLM. |
-| `prompt` | `str` | The user prompt template. Supports `{{ variable }}` interpolation. |
+| `prompt` | `str` | The user prompt template. Supports Jinja2 syntax (e.g., `{{ variable }}`, `{% if ... %}`). |
 | `use_history` | `bool` | Enable conversation history tracking. |
 | `session_id` | `str` | Unique ID for the conversation session (required if `use_history=True`). |
 | `redis_url` | `str` | URL for Redis instance to persist history. |

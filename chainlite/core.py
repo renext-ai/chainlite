@@ -127,8 +127,6 @@ class ChainLite:
             return "\n\n".join(parts)
         return None
 
-        return str(item)
-
     async def _process_media_item(
         self, item: Any
     ) -> Union[ImageUrl, BinaryContent, str]:
