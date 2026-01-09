@@ -91,3 +91,6 @@ Desktop.ini
 # pixi environments
 .pixi/*
 !.pixi/config.toml
+
+# AG Workspace
+.agent/*

@@ -265,12 +265,13 @@ class ChainLite:
         logger.warning(f"Input: {input_data}")
         self.exception_retry += 1
 
-    def run(self, input_data: dict) -> Union[str, Dict[str, Any]]:
+    def run(self, input_data: dict, deps: Any = None) -> Union[str, Dict[str, Any]]:
         """
         Executes the synchronous chat flow.
 
         Args:
             input_data: A dictionary containing the input data for the chat flow.
+            deps: Optional dependencies to pass to the agent.
 
         Returns:
             The response from the language model, either as string or structured data.
@@ -286,6 +287,7 @@ class ChainLite:
                     prompt,
                     message_history=message_history,
                     model_settings=self._model_settings,
+                    deps=deps,
                 )
                 return self._process_run_result(result)
 
@@ -299,12 +301,15 @@ class ChainLite:
 
                 logger.info(f"Retrying {current_try}/{max_retries}")
 
-    async def arun(self, input_data: dict) -> Union[str, Dict[str, Any]]:
+    async def arun(
+        self, input_data: dict, deps: Any = None
+    ) -> Union[str, Dict[str, Any]]:
         """
         Executes the asynchronous chat flow.
 
         Args:
             input_data: A dictionary containing the input data for the chat flow.
+            deps: Optional dependencies to pass to the agent.
 
         Returns:
             The response from the language model, either as string or structured data.
@@ -320,6 +325,7 @@ class ChainLite:
                     prompt,
                     message_history=message_history,
                     model_settings=self._model_settings,
+                    deps=deps,
                 )
                 return self._process_run_result(result)
 
@@ -334,12 +340,13 @@ class ChainLite:
                 logger.info(f"Retrying {current_try}/{max_retries}")
                 await asyncio.sleep(1)
 
-    def stream(self, input_data: dict) -> Generator[str, None, None]:
+    def stream(self, input_data: dict, deps: Any = None) -> Generator[str, None, None]:
         """
         Synchronously processes input data through the agent, yielding text chunks.
 
         Args:
             input_data: A dictionary of input data.
+            deps: Optional dependencies to pass to the agent.
 
         Yields:
             Text chunks from the streaming response.
@@ -351,6 +358,7 @@ class ChainLite:
             prompt,
             message_history=message_history,
             model_settings=self._model_settings,
+            deps=deps,
         )
         for chunk in result.stream_text(delta=True):
             yield chunk
@@ -359,12 +367,15 @@ class ChainLite:
         if self.history_manager:
             self._update_history(result.new_messages())
 
-    async def astream(self, input_data: dict) -> AsyncGenerator[str, None]:
+    async def astream(
+        self, input_data: dict, deps: Any = None
+    ) -> AsyncGenerator[str, None]:
         """
         Asynchronously processes input data through the agent, yielding text chunks.
 
         Args:
             input_data: A dictionary of input data.
+            deps: Optional dependencies to pass to the agent.
 
         Yields:
             Text chunks from the streaming response.
@@ -376,6 +387,7 @@ class ChainLite:
             prompt,
             message_history=message_history,
             model_settings=self._model_settings,
+            deps=deps,
         ) as result:
             async for chunk in result.stream_text(delta=True):
                 yield chunk
