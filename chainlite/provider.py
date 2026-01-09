@@ -45,7 +45,4 @@ def resolve_model_string(llm_model_name: str) -> str:
             model_name = llm_model_name[len(chainlite_prefix) :]
             return f"{pydantic_prefix}{model_name}"
 
-    raise ValueError(
-        f"Unknown model provider: {llm_model_name}. "
-        f"Supported prefixes: {list(PROVIDER_MAPPING.keys())}"
-    )
+    return llm_model_name

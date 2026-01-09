@@ -95,9 +95,16 @@ class ChainLite:
         instructions = self._build_instructions()
 
         # Configure model settings
-        model_settings = None
+        settings_dict = {}
+        if self.config.model_settings:
+            settings_dict.update(self.config.model_settings)
+
         if self.config.temperature is not None:
-            model_settings = ModelSettings(temperature=self.config.temperature)
+            settings_dict["temperature"] = self.config.temperature
+
+        model_settings = None
+        if settings_dict:
+            model_settings = ModelSettings(**settings_dict)
 
         # Create the agent
         if self.output_model:

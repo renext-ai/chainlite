@@ -21,7 +21,7 @@ from chainlite import ChainLite, ChainLiteConfig
 test_config = ChainLiteConfig(
     llm_model_name="openai:gpt-3.5-turbo",
     prompt="Tell me a short, one-sentence joke about a computer.",
-    temperature=0.7,
+    model_settings={"temperature": 0.2},
     config_name="functional_test",
 )
 

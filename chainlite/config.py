@@ -11,6 +11,7 @@ class ChainLiteConfig(BaseModel):
     system_prompt: Optional[str] = None
     prompt: Optional[str] = None
     llm_model_name: str
+    model_settings: Optional[Dict[str, Any]] = None
     temperature: Optional[float] = None
     output_parser: Optional[List[Dict[str, Any]]] = None
     use_history: Optional[bool] = False
