@@ -127,19 +127,35 @@ class ChainLite:
         """Create an agent instance with the given instructions."""
         model_string = resolve_model_string(self.config.llm_model_name)
 
+        # Collect tools from existing agent
+        tools = []
+        # Check for _function_toolset (pydantic-ai internal structure)
+        if self.agent and hasattr(self.agent, "_function_toolset"):
+            toolset = self.agent._function_toolset
+            if hasattr(toolset, "tools"):
+                tools.extend(toolset.tools.values())
+        # Fallback/Older pydantic-ai version check
+        elif self.agent and hasattr(self.agent, "_function_tools"):
+            tools.extend(self.agent._function_tools.values())
+
+        # Create new agent with tools
         if self.output_model:
-            return Agent(
+            new_agent = Agent(
                 model_string,
                 instructions=instructions,
                 output_type=self.output_model,
                 retries=self.config.max_retries or 3,
+                tools=tools,  # Pass existing tools
             )
         else:
-            return Agent(
+            new_agent = Agent(
                 model_string,
                 instructions=instructions,
                 retries=self.config.max_retries or 3,
+                tools=tools,  # Pass existing tools
             )
+
+        return new_agent
 
     def _build_instructions(self, context: Dict[str, Any] = None) -> Optional[str]:
         """Build system instructions from config, optionally rendering with context."""
