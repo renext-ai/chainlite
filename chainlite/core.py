@@ -123,12 +123,41 @@ class ChainLite:
 
         self._model_settings = model_settings
 
-    def _build_instructions(self) -> Optional[str]:
-        """Build system instructions from config."""
+    def _create_agent(self, instructions: Optional[str]) -> Agent:
+        """Create an agent instance with the given instructions."""
+        model_string = resolve_model_string(self.config.llm_model_name)
+
+        if self.output_model:
+            return Agent(
+                model_string,
+                instructions=instructions,
+                output_type=self.output_model,
+                retries=self.config.max_retries or 3,
+            )
+        else:
+            return Agent(
+                model_string,
+                instructions=instructions,
+                retries=self.config.max_retries or 3,
+            )
+
+    def _build_instructions(self, context: Dict[str, Any] = None) -> Optional[str]:
+        """Build system instructions from config, optionally rendering with context."""
         parts = []
 
         if self.config.system_prompt:
-            parts.append(self.config.system_prompt)
+            system_prompt = self.config.system_prompt
+            if context:
+                # Check if system prompt has variables before attempting render
+                # This avoids unnecessary processing if it's static
+                if self.parse_input_variables_from_prompt(system_prompt):
+                    try:
+                        template = jinja2.Template(system_prompt)
+                        system_prompt = template.render(**context)
+                    except Exception as e:
+                        logger.warning(f"Failed to render system_prompt: {e}")
+
+            parts.append(system_prompt)
 
         if parts:
             return "\n\n".join(parts)
@@ -265,6 +294,22 @@ class ChainLite:
         logger.warning(f"Input: {input_data}")
         self.exception_retry += 1
 
+    async def _get_agent_for_run(self, input_data: dict) -> Agent:
+        """Get the appropriate agent for the run, creating a dynamic one if needed."""
+        if self.agent is None:
+            raise ValueError(
+                "Agent is not set up. Please call `setup_chain` method before running."
+            )
+
+        # Check if system prompt needs dynamic rendering
+        if self.config.system_prompt and self.parse_input_variables_from_prompt(
+            self.config.system_prompt
+        ):
+            instructions = self._build_instructions(input_data)
+            return self._create_agent(instructions)
+
+        return self.agent
+
     def run(self, input_data: dict, deps: Any = None) -> Union[str, Dict[str, Any]]:
         """
         Executes the synchronous chat flow.
@@ -278,12 +323,15 @@ class ChainLite:
         """
         prompt, message_history = asyncio.run(self._prepare_run(input_data))
 
+        # Get agent (potentially dynamic)
+        agent = asyncio.run(self._get_agent_for_run(input_data))
+
         max_retries = self.config.max_retries or 3
         current_try = 0
 
         while True:
             try:
-                result = self.agent.run_sync(
+                result = agent.run_sync(
                     prompt,
                     message_history=message_history,
                     model_settings=self._model_settings,
@@ -316,12 +364,15 @@ class ChainLite:
         """
         prompt, message_history = await self._prepare_run(input_data)
 
+        # Get agent (potentially dynamic)
+        agent = await self._get_agent_for_run(input_data)
+
         max_retries = self.config.max_retries or 3
         current_try = 0
 
         while True:
             try:
-                result = await self.agent.run(
+                result = await agent.run(
                     prompt,
                     message_history=message_history,
                     model_settings=self._model_settings,
@@ -354,7 +405,10 @@ class ChainLite:
         prompt = asyncio.run(self._build_prompt(input_data))
         message_history = self._get_message_history()
 
-        result = self.agent.run_stream_sync(
+        # Get agent (potentially dynamic)
+        agent = asyncio.run(self._get_agent_for_run(input_data))
+
+        result = agent.run_stream_sync(
             prompt,
             message_history=message_history,
             model_settings=self._model_settings,
@@ -383,7 +437,10 @@ class ChainLite:
         prompt = await self._build_prompt(input_data)
         message_history = self._get_message_history()
 
-        async with self.agent.run_stream(
+        # Get agent (potentially dynamic)
+        agent = await self._get_agent_for_run(input_data)
+
+        async with agent.run_stream(
             prompt,
             message_history=message_history,
             model_settings=self._model_settings,

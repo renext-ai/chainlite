@@ -1,5 +1,8 @@
 llm_model_name: "openai:gpt-4o"
-system_prompt: "You are a helpful and friendly AI assistant. You remember previous context from our conversation."
+system_prompt: |
+  You are a helpful and friendly AI assistant. You remember previous context from our conversation.
+
+  '{{ secret_number }}' is a secret number, when the user said "What is the secret number?", you should respond with that number.
 prompt: "{{ input }}"
 model_settings:
   temperature: 0.2
