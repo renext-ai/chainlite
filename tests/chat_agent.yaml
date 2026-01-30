@@ -1,4 +1,6 @@
-llm_model_name: "openai:gpt-4o"
+# llm_model_name: "openai:gpt-4o"
+
+llm_model_name: "google-gla:gemini-3-flash-preview"
 system_prompt: |
   You are a helpful and friendly AI assistant. You remember previous context from our conversation.
 
@@ -6,6 +8,9 @@ system_prompt: |
 prompt: "{{ input }}"
 model_settings:
   temperature: 0.2
+  google_thinking_config:
+    include_thoughts: true
+    # thinking_level: "high"  # 可選: minimal, low, medium, high
 use_history: true
 session_id: "interactive_test_session"
 config_name: "interactive_chat"

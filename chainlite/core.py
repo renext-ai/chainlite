@@ -27,6 +27,7 @@ from pydantic_ai.settings import ModelSettings
 from .config import ChainLiteConfig
 from .provider import resolve_model_string
 from .history import HistoryManager
+from .streaming import StreamProcessor
 
 
 class ChainLite:
@@ -430,7 +431,21 @@ class ChainLite:
             model_settings=self._model_settings,
             deps=deps,
         )
-        for chunk in result.stream_text(delta=True):
+
+        processor = StreamProcessor()
+
+        if hasattr(result, "stream_responses"):
+            for message in result.stream_responses():
+                if isinstance(message, tuple):
+                    message = message[0]
+                for chunk in processor.process_message(message):
+                    yield chunk
+        else:
+            for chunk in result.stream_text(delta=True):
+                yield chunk
+
+        # Close any open tags
+        for chunk in processor.close():
             yield chunk
 
         # Update history after stream completes
@@ -442,18 +457,10 @@ class ChainLite:
     ) -> AsyncGenerator[str, None]:
         """
         Asynchronously processes input data through the agent, yielding text chunks.
-
-        Args:
-            input_data: A dictionary of input data.
-            deps: Optional dependencies to pass to the agent.
-
-        Yields:
-            Text chunks from the streaming response.
+        Uses _StreamProcessor to handle part transitions and inject headers/tags.
         """
         prompt = await self._build_prompt(input_data)
         message_history = self._get_message_history()
-
-        # Get agent (potentially dynamic)
         agent = await self._get_agent_for_run(input_data)
 
         async with agent.run_stream(
@@ -462,7 +469,18 @@ class ChainLite:
             model_settings=self._model_settings,
             deps=deps,
         ) as result:
-            async for chunk in result.stream_text(delta=True):
+
+            processor = StreamProcessor()
+
+            async for message in result.stream_responses():
+                if isinstance(message, tuple):
+                    message = message[0]
+
+                for chunk in processor.process_message(message):
+                    yield chunk
+
+            # Close any open tags
+            for chunk in processor.close():
                 yield chunk
 
             # Update history after stream completes
