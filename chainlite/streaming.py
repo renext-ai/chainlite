@@ -8,7 +8,7 @@ import asyncio
 import json
 import logging
 import traceback
-from typing import Any, AsyncGenerator, TYPE_CHECKING
+from typing import Any, AsyncGenerator, Generator, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .core import ChainLite
@@ -36,17 +36,17 @@ async def stream_sse(
             yield f"data: {json_output}\n\n"
     except asyncio.TimeoutError as e:
         logging.error("Timeout occurred in the streaming process: %s", e)
-        raise e
+        raise
     except ValueError as e:
         logging.error("Value error in the streaming process: %s", e)
-        raise e
+        raise
     except TypeError as e:
         logging.error("Type error in the streaming process: %s", e)
-        raise e
+        raise
     except Exception as e:
         logging.error("Unexpected error in the streaming process: %s", e)
         traceback.print_exc()
-        raise e
+        raise
 
 
 class StreamProcessor:
