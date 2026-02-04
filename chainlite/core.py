@@ -472,11 +472,15 @@ class ChainLite:
 
             processor = StreamProcessor()
 
-            async for message in result.stream_responses():
-                if isinstance(message, tuple):
-                    message = message[0]
+            if hasattr(result, "stream_responses"):
+                async for message in result.stream_responses():
+                    if isinstance(message, tuple):
+                        message = message[0]
 
-                for chunk in processor.process_message(message):
+                    for chunk in processor.process_message(message):
+                        yield chunk
+            else:
+                async for chunk in result.stream_text(delta=True):
                     yield chunk
 
             # Close any open tags
