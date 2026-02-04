@@ -440,6 +440,12 @@ class ChainLite:
                     message = message[0]
                 for chunk in processor.process_message(message):
                     yield chunk
+        elif hasattr(result, "stream_structured"):
+            for message in result.stream_structured():
+                if isinstance(message, tuple):
+                    message = message[0]
+                for chunk in processor.process_message(message):
+                    yield chunk
         else:
             for chunk in result.stream_text(delta=True):
                 yield chunk
@@ -474,6 +480,13 @@ class ChainLite:
 
             if hasattr(result, "stream_responses"):
                 async for message in result.stream_responses():
+                    if isinstance(message, tuple):
+                        message = message[0]
+
+                    for chunk in processor.process_message(message):
+                        yield chunk
+            elif hasattr(result, "stream_structured"):
+                async for message in result.stream_structured():
                     if isinstance(message, tuple):
                         message = message[0]
 
