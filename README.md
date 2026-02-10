@@ -16,22 +16,22 @@ ChainLite is a lightweight, configuration-driven utility for building LLM-powere
 Since ChainLite is not currently published on PyPI, you can install it directly from the source.
 
 ### Prerequisites
-- Python 3.9+
+- Python 3.10+
 - (Optional) Redis server for persistent history
 
 ### Install from Source
 
 **Option 1: Clone and Install**
 ```bash
-git clone https://github.com/renext-ai/chainlite.git
+git clone https://github.com/aidenpearce/chainlite.git
 cd chainlite
 pip install -e .
 ```
 
 **Option 2: Direct Install from GitHub**
 ```bash
-pip install "git+https://github.com/renext-ai/chainlite.git"
-pixi add --pypi "chainlite @ git+https://github.com/renext-ai/chainlite.git"
+pip install "git+https://github.com/aidenpearce/chainlite.git"
+pixi add --pypi "chainlite @ git+https://github.com/aidenpearce/chainlite.git"
 ```
 
 ## Quick Start
@@ -150,9 +150,9 @@ The `ChainLiteConfig` support the following key parameters:
 | `session_id` | `str` | Unique ID for the conversation session (required if `use_history=True`). |
 | `redis_url` | `str` | URL for Redis instance to persist history. |
 | `temperature` | `float` | Sampling temperature (0.0 to 1.0). |
-| `max_tokens` | `int` | Maximum tokens to generate. |
-| `retries` | `int` | Number of retries for failed requests. |
-| `output_parser` | `List[str]` | Schema definition for structured output extraction. |
+| `model_settings` | `Dict[str, Any]` | Provider-specific model settings passed through to Pydantic AI. |
+| `max_retries` | `int` | Number of retries for failed requests. |
+| `output_parser` | `List[Dict[str, Any]]` | Schema definition for structured output extraction. |
 
 ## Development
 
@@ -192,16 +192,29 @@ This project uses [Pixi](https://prefix.dev/docs/pixi/overview) for dependency m
 
 1. **Install Dependencies**:
    ```bash
-   pip install -r requirements.txt
-   # OR
    pip install -e .
+   # or include test tools
+   pip install -e ".[dev]"
    ```
 
 2. **Run Tests**:
-   Ensure you have a `.env` file with necessary API keys (e.g., `OPENAI_API_KEY`).
    ```bash
-   python tests/interactive_chat.py --config tests/chat_agent.yaml
+   pytest
    ```
+   `integration` tests are excluded by default. To run integration tests:
+   ```bash
+   OPENAI_API_KEY=... pytest -m integration
+   ```
+
+## CI and Releases
+
+- Pull requests run unit tests automatically via GitHub Actions.
+- Integration tests are intentionally not part of default CI because they require provider credentials.
+- A release workflow is included to publish package artifacts on GitHub release/tag events.
+
+## Contributing
+
+Please see [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, test strategy, and PR expectations.
 
 ## License
 

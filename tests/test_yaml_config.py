@@ -8,12 +8,14 @@ import os
 # Load environment variables
 load_dotenv()
 
+pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
+
 
 @pytest.fixture(autouse=True)
 def check_env():
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key or api_key == "your_openai_api_key_here":
-        pytest.fail("Please set OPENAI_API_KEY in .env file before running tests.")
+        pytest.skip("OPENAI_API_KEY is not configured; skipping integration tests.")
 
 
 async def test_basic_yaml():

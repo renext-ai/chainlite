@@ -3,9 +3,19 @@ import asyncio
 from dotenv import load_dotenv
 from chainlite import ChainLite, ChainLiteConfig
 from loguru import logger
+import pytest
 
 # Load environment variables (API keys)
 load_dotenv()
+
+pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
+
+
+@pytest.fixture(autouse=True)
+def check_env():
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key or api_key == "your_openai_api_key_here":
+        pytest.skip("OPENAI_API_KEY is not configured; skipping integration tests.")
 
 
 async def test_local_file():
