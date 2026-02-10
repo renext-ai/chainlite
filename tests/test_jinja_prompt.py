@@ -1,8 +1,14 @@
 import pytest
+import os
 from chainlite import ChainLite, ChainLiteConfig
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+@pytest.fixture(autouse=True)
+def set_dummy_openai_key():
+    os.environ.setdefault("OPENAI_API_KEY", "dummy")
 
 
 @pytest.mark.asyncio

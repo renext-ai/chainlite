@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import MagicMock, AsyncMock
 import asyncio
+import os
 from typing import Any
 from chainlite.core import ChainLite
 from chainlite.config import ChainLiteConfig
@@ -10,6 +11,7 @@ from dotenv import load_dotenv
 class TestDepsPassthrough(unittest.TestCase):
     def setUp(self):
         load_dotenv()
+        os.environ.setdefault("OPENAI_API_KEY", "dummy")
         self.config = ChainLiteConfig(llm_model_name="openai:gpt-4o", use_history=False)
         self.chain_lite = ChainLite(self.config)
 
