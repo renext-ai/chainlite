@@ -210,7 +210,16 @@ This project uses [Pixi](https://prefix.dev/docs/pixi/overview) for dependency m
 
 - Pull requests run unit tests automatically via GitHub Actions.
 - Integration tests are intentionally not part of default CI because they require provider credentials.
-- A release workflow is included to publish package artifacts on GitHub release/tag events.
+- PR titles are validated with semantic types (e.g. `feat`, `fix`, `docs`).
+- Release Please automatically prepares version bumps and changelog updates via release PRs.
+- A publish workflow releases package artifacts to PyPI when a GitHub Release is published.
+- PyPI publish is gated by repository variable `PYPI_PUBLISH_ENABLED=true`; otherwise workflow logs a skip and exits successfully.
+
+### Release Policy
+
+- `fix` changes produce `PATCH` releases.
+- `feat` changes produce `MINOR` releases.
+- Breaking changes (`!`, for example `feat!:`) produce `MAJOR` releases.
 
 ## Contributing
 

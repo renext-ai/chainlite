@@ -47,11 +47,30 @@ jobs:
       contents: read
 
     steps:
+      - name: Decide publish mode
+        id: mode
+        env:
+          PYPI_PUBLISH_ENABLED: ${{ vars.PYPI_PUBLISH_ENABLED }}
+        run: |
+          if [ "${PYPI_PUBLISH_ENABLED}" = "true" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "PyPI publish is enabled."
+            echo "PyPI publish is enabled." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "PyPI publish is disabled. Set repository variable PYPI_PUBLISH_ENABLED=true to enable publishing."
+            echo "PyPI publish was skipped." >> "$GITHUB_STEP_SUMMARY"
+            echo "- Reason: repository variable \`PYPI_PUBLISH_ENABLED\` is not set to \`true\`." >> "$GITHUB_STEP_SUMMARY"
+            echo "- Next step: configure PyPI Trusted Publisher and set \`PYPI_PUBLISH_ENABLED=true\`." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Download build artifacts
+        if: steps.mode.outputs.enabled == 'true'
         uses: actions/download-artifact@v4
         with:
           name: python-dist
           path: dist
 
       - name: Publish to PyPI
+        if: steps.mode.outputs.enabled == 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
