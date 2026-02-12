@@ -83,3 +83,59 @@ response = await chain.arun(
 )
 print(response)
 ```
+
+## Config-Driven Sub-Agents
+
+Instead of manually registering tools with `@chain.agent.tool`, you can declare sub-agents directly in YAML. Each sub-agent is another ChainLite config that gets automatically registered as a tool on the parent agent during `setup_chain()`.
+
+### YAML Syntax
+
+**`orchestrator.yaml`:**
+```yaml
+config_name: "orchestrator"
+llm_model_name: "openai:gpt-4"
+system_prompt: "You are a coordinator. Use the available tools to help the user."
+prompt: "{{ input }}"
+sub_agents:
+  - name: "translate"
+    config: "translator.yaml"
+    description: "Translate text to French."
+  - name: "summarize"
+    config: "summarizer.yaml"
+    description: "Summarize long text into one sentence."
+```
+
+**`translator.yaml`:**
+```yaml
+llm_model_name: "openai:gpt-3.5-turbo"
+system_prompt: "You are a translator. Translate the input text to French."
+prompt: "{{ input }}"
+```
+
+**`summarizer.yaml`:**
+```yaml
+llm_model_name: "openai:gpt-3.5-turbo"
+system_prompt: "You are a summarizer. Provide a one-sentence summary."
+prompt: "{{ input }}"
+```
+
+### Usage
+
+```python
+from chainlite import ChainLite
+
+chain = ChainLite.load_config_from_yaml("orchestrator.yaml")
+
+# That's it! Sub-agents are already registered as tools.
+# The orchestrator LLM can now call "translate" and "summarize" as needed.
+response = await chain.arun({"input": "Translate 'hello world' to French."})
+```
+
+### How It Works
+
+- Each sub-agent entry declares a `name` (tool name), `config` (YAML path), and `description` (shown to the LLM).
+- Config paths are resolved **relative to the parent YAML file** when using `load_config_from_yaml()`.
+- Sub-agents are **lazily instantiated** on first tool call, not at load time.
+- Each tool takes a single `input: str` parameter and passes it as `{"input": input}` to the sub-agent.
+- Sub-agent calls are **stateless** — each invocation is independent (no conversation history).
+- You can **combine** config-driven sub-agents with manual `@chain.agent.tool` decorators on the same chain.
