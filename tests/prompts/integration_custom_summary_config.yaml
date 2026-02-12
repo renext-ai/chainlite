@@ -1,0 +1,9 @@
+llm_model_name: "openai:gpt-4o-mini"
+system_prompt: "You are a test assistant. Use tools to generate content."
+use_history: true
+session_id: "integration_test_custom_summary"
+history_trunctor_config:
+  mode: "custom"
+  truncation_threshold: 100
+  summarizor_config_path: "tests/custom_summarizer.yaml"
+config_name: "integration_custom_summary_config"

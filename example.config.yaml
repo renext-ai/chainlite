@@ -30,7 +30,6 @@ llm_model_name: "openai:gpt-4"
 # like 0.2 make it more deterministic. Defaults to the provider's default.
 # temperature: 0.7
 
-
 # (Optional) The maximum number of retries for a failed operation.
 # Defaults to 3.
 # max_retries: 5
@@ -62,6 +61,14 @@ llm_model_name: "openai:gpt-4"
 # (Optional) URL for a Redis server to persist conversation history.
 # If not provided, history will be stored in-memory and lost on restart.
 # redis_url: "redis://localhost:6379/0"
+
+# (Optional) The strategy to use for truncating long tool results in history.
+# history_trunctor_config:
+#   mode: "simple"  # simple, auto, custom
+#   truncation_threshold: 5000
+#   # For "custom" mode:
+#   # summarizor_config_path: "path/to/summarizer.yaml"
+#   # summarizor_config_dict: {}
 
 # --------------------------------------------------------------------------
 # Provider-Specific Settings

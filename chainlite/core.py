@@ -54,16 +54,6 @@ class ChainLite:
         self.history_manager: Optional[HistoryManager] = None
         self.exception_retry = 0
 
-        if self.config.use_history:
-            logger.info(
-                f"Chain Builder using history with session_id: {self.config.session_id}"
-                f"{' (config: ' + self.config.config_name + ')' if self.config.config_name else ''}"
-            )
-            self.history_manager = HistoryManager(
-                session_id=self.config.session_id,
-                redis_url=self.config.redis_url,
-            )
-
         self.setup_chain()
 
     def _merge_dictionaries(self, dict_list: List[Dict]) -> Dict:
@@ -90,6 +80,47 @@ class ChainLite:
         if self.config.output_parser:
             self.output_model = self.create_dynamic_pydantic_model(
                 self._merge_dictionaries(self.config.output_parser)
+            )
+
+        # Truncator and History Setup
+        truncator = None
+        if self.config.history_trunctor_config:
+            from .trunctors import SimpleTrunctor, AutoSummarizor, ChainLiteSummarizor
+
+            t_config = self.config.history_trunctor_config
+            mode = t_config.get("mode")
+            threshold = t_config.get("truncation_threshold", 5000)
+
+            if mode == "simple":
+                truncator = SimpleTrunctor(threshold=threshold)
+            elif mode == "auto":
+                truncator = AutoSummarizor(
+                    threshold=threshold, model_name=self.config.llm_model_name
+                )
+            elif mode == "custom":
+                path = t_config.get("summarizor_config_path")
+                dict_cfg = t_config.get("summarizor_config_dict")
+                if path and dict_cfg:
+                    raise ValueError(
+                        "Cannot specify both 'summarizor_config_path' and 'summarizor_config_dict'"
+                    )
+                if not path and not dict_cfg:
+                    raise ValueError(
+                        "Must specify either 'summarizor_config_path' or 'summarizor_config_dict' for custom trunctor"
+                    )
+                truncator = ChainLiteSummarizor(
+                    config_or_path=path or dict_cfg, threshold=threshold
+                )
+
+        if self.config.use_history:
+            logger.info(
+                f"Chain Builder using history with session_id: {self.config.session_id}"
+                f"{' (config: ' + self.config.config_name + ')' if self.config.config_name else ''}"
+            )
+            self.history_manager = HistoryManager(
+                session_id=self.config.session_id,
+                redis_url=self.config.redis_url,
+                truncator=truncator,
             )
 
         # Build system instructions
@@ -270,10 +301,19 @@ class ChainLite:
             )
         return None
 
-    def _update_history(self, new_messages: List[ModelMessage]) -> None:
+    def _update_history(
+        self, new_messages: List[ModelMessage], context: Optional[str] = None
+    ) -> None:
         """Update message history with new messages."""
         if self.history_manager:
-            self.history_manager.add_messages(new_messages)
+            self.history_manager.add_messages(new_messages, context=context)
+
+    async def _aupdate_history(
+        self, new_messages: List[ModelMessage], context: Optional[str] = None
+    ) -> None:
+        """Update message history asynchronously."""
+        if self.history_manager:
+            await self.history_manager.add_messages_async(new_messages, context=context)
 
     async def _prepare_run(self, input_data: dict) -> tuple[
         Union[str, list[Union[str, BinaryContent, ImageUrl]]],
@@ -288,10 +328,24 @@ class ChainLite:
         message_history = self._get_message_history()
         return prompt, message_history
 
-    def _process_run_result(self, result: Any) -> Union[str, Dict[str, Any]]:
+    def _process_run_result(
+        self, result: Any, context: Optional[str] = None
+    ) -> Union[str, Dict[str, Any]]:
         """Process agent run result: update history and dump output."""
         if self.history_manager:
-            self._update_history(result.new_messages())
+            self._update_history(result.new_messages(), context=context)
+
+        output = result.output
+        if isinstance(output, BaseModel):
+            return output.model_dump()
+        return output
+
+    async def _aprocess_run_result(
+        self, result: Any, context: Optional[str] = None
+    ) -> Union[str, Dict[str, Any]]:
+        """Process agent run result asynchronously."""
+        if self.history_manager:
+            await self._aupdate_history(result.new_messages(), context=context)
 
         output = result.output
         if isinstance(output, BaseModel):
@@ -354,7 +408,9 @@ class ChainLite:
                     model_settings=self._model_settings,
                     deps=deps,
                 )
-                return self._process_run_result(result)
+                # Capture the prompt string for context-aware truncation
+                input_str = input_data.get("input") or str(prompt)
+                return self._process_run_result(result, context=input_str)
 
             except Exception as e:
                 current_try += 1
@@ -395,7 +451,8 @@ class ChainLite:
                     model_settings=self._model_settings,
                     deps=deps,
                 )
-                return self._process_run_result(result)
+                input_str = input_data.get("input") or str(prompt)
+                return await self._aprocess_run_result(result, context=input_str)
 
             except Exception as e:
                 current_try += 1
@@ -501,8 +558,10 @@ class ChainLite:
                 yield chunk
 
             # Update history after stream completes
+            # Update history after stream completes
             if self.history_manager:
-                self._update_history(result.new_messages())
+                input_str = input_data.get("input") or str(prompt)
+                await self._aupdate_history(result.new_messages(), context=input_str)
 
     @property
     def chat_history_messages(self) -> Optional[List[ModelMessage]]:

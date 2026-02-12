@@ -20,7 +20,7 @@ def check_env():
 
 async def test_basic_yaml():
     logger.info("--- Testing Basic YAML Config ---")
-    chain = ChainLite.load_config_from_yaml("tests/test_basic.yaml")
+    chain = ChainLite.load_config_from_yaml("tests/prompts/test_basic.yaml")
     response = await chain.arun({"topic": "artificial intelligence"})
     logger.info(f"Basic Response: {response}")
     assert response is not None, "Response should not be None"
@@ -30,7 +30,7 @@ async def test_basic_yaml():
 
 async def test_structured_yaml():
     logger.info("--- Testing Structured YAML Config ---")
-    chain = ChainLite.load_config_from_yaml("tests/test_structured.yaml")
+    chain = ChainLite.load_config_from_yaml("tests/prompts/test_structured.yaml")
     target_age = 31
     input_text = f"John Doe is {target_age} years old."
     response = await chain.arun({"text": input_text})
@@ -51,7 +51,7 @@ async def test_structured_yaml():
 
 async def test_streaming_yaml():
     logger.info("--- Testing Streaming from YAML Config ---")
-    chain = ChainLite.load_config_from_yaml("tests/test_basic.yaml")
+    chain = ChainLite.load_config_from_yaml("tests/prompts/test_basic.yaml")
     logger.info("Streaming Response:")
     collected_text = ""
     async for chunk in chain.astream({"topic": "ocean"}):

@@ -1,6 +1,5 @@
-from typing import Optional, List
+from typing import Optional, List, Dict, Any, Union, TYPE_CHECKING
 from loguru import logger
-from pydantic import TypeAdapter
 from pydantic import TypeAdapter
 from pydantic_ai.messages import (
     ModelMessage,
@@ -11,21 +10,30 @@ from pydantic_ai.messages import (
     SystemPromptPart,
 )
 
+if TYPE_CHECKING:
+    from .core import ChainLite
+
+
+from .trunctors import BaseHistoryTrunctor
+
 
 class HistoryManager:
-    """Manages conversation history with optional Redis persistence."""
+    """Manages conversation history with dual storage for context and raw logs."""
 
     def __init__(
         self,
         session_id: str,
         redis_url: Optional[str] = None,
         max_messages: int = 45,
+        truncator: Optional[BaseHistoryTrunctor] = None,
     ):
         self.session_id = session_id
         self.redis_url = redis_url
         self.max_messages = max_messages
+        self.truncator = truncator
         self._redis_client = None
-        self._messages: List[ModelMessage] = []
+        self._messages: List[ModelMessage] = []  # Context History (for LLM)
+        self._raw_messages: List[ModelMessage] = []  # Raw History (for Audit)
 
         if redis_url:
             self._init_redis()
@@ -47,131 +55,222 @@ class HistoryManager:
         if not self._redis_client:
             return
         try:
-            key = f"chainlite:history:{self.session_id}"
-            data = self._redis_client.get(key)
-            if data:
-                # Use TypeAdapter to validate and load the list of ModelMessages
-                adapter = TypeAdapter(List[ModelMessage])
-                self._messages = adapter.validate_json(data)
+            key_ctx = f"chainlite:history:{self.session_id}"
+            key_raw = f"chainlite:history:raw:{self.session_id}"
 
-                # Apply smart truncation
-                self._truncate_history()
+            data_ctx = self._redis_client.get(key_ctx)
+            if data_ctx:
+                adapter = TypeAdapter(List[ModelMessage])
+                self._messages = adapter.validate_json(data_ctx)
+                self._truncate_history(self._messages)
+
+            data_raw = self._redis_client.get(key_raw)
+            if data_raw:
+                adapter = TypeAdapter(List[ModelMessage])
+                self._raw_messages = adapter.validate_json(data_raw)
         except Exception as e:
             logger.warning(f"Failed to load history from Redis: {e}")
-            self._messages = []
 
     def _save_to_redis(self) -> None:
         """Save message history to Redis."""
         if not self._redis_client:
             return
         try:
-            key = f"chainlite:history:{self.session_id}"
-            # Trim before saving
-            self._truncate_history()
+            key_ctx = f"chainlite:history:{self.session_id}"
+            key_raw = f"chainlite:history:raw:{self.session_id}"
 
-            # Use TypeAdapter to serialize the list of ModelMessages
+            self._truncate_history(self._messages)
+
             adapter = TypeAdapter(List[ModelMessage])
-            json_data = adapter.dump_json(self._messages)
-            self._redis_client.set(key, json_data)
+            self._redis_client.set(key_ctx, adapter.dump_json(self._messages))
+            self._redis_client.set(key_raw, adapter.dump_json(self._raw_messages))
         except Exception as e:
             logger.warning(f"Failed to save history to Redis: {e}")
 
     @property
     def messages(self) -> List[ModelMessage]:
-        """Get the current message history, with safety check for dangling tool calls."""
-        if not self._messages:
+        """Get the context message history (for LLM)."""
+        return self._fix_dangling_tool_calls(self._messages)
+
+    @property
+    def raw_messages(self) -> List[ModelMessage]:
+        """Get the raw message history (for Audit)."""
+        return self._raw_messages
+
+    def _fix_dangling_tool_calls(
+        self, messages: List[ModelMessage]
+    ) -> List[ModelMessage]:
+        if not messages:
             return []
-
-        last_msg = self._messages[-1]
-
+        last_msg = messages[-1]
         if isinstance(last_msg, (ModelRequest, ModelResponse)):
             has_tool_call = False
             for part in last_msg.parts:
-
                 if getattr(part, "part_kind", "") == "tool-call" or hasattr(
                     part, "tool_name"
                 ):
                     has_tool_call = True
                     break
-
             if has_tool_call:
-                logger.warning(
-                    "⚠️ Detected dangling Tool Call in memory. Truncating history to fix API sequence."
-                )
+                return messages[:-1]
+        return messages
 
-                return self._messages[:-1]
+    def add_messages(
+        self, messages: List[ModelMessage], context: Optional[str] = None
+    ) -> None:
+        """Add new messages to history (Synchronous)."""
+        self._raw_messages.extend(messages)
+        if self.truncator:
+            processed_messages = self.truncator.truncate(messages, context=context)
+            self._messages.extend(processed_messages)
+        else:
+            self._messages.extend(messages)
 
-        return self._messages
-
-    def add_messages(self, messages: List[ModelMessage]) -> None:
-        """Add new messages to history."""
-        self._messages.extend(messages)
-        self._truncate_history()
+        self._truncate_history(self._messages)
         if self._redis_client:
             self._save_to_redis()
 
-    def _truncate_history(self) -> None:
-        """
-        Smartly truncate history to max_messages, ensuring we start with a valid User/System message
-        and do not break Tool sequences.
-        """
-        if len(self._messages) <= self.max_messages:
+    async def add_messages_async(
+        self, messages: List[ModelMessage], context: Optional[str] = None
+    ) -> None:
+        """Add new messages to history (Asynchronous)."""
+        self._raw_messages.extend(messages)
+        if self.truncator:
+            processed_messages = await self.truncator.atruncate(
+                messages, context=context
+            )
+            self._messages.extend(processed_messages)
+        else:
+            self._messages.extend(messages)
+
+        self._truncate_history(self._messages)
+        if self._redis_client:
+            self._save_to_redis()
+
+    def _truncate_history(self, messages_list: List[ModelMessage]) -> None:
+        """Smartly truncate history list to max_messages."""
+        if len(messages_list) <= self.max_messages:
             return
 
-        # 1. Initial naive cut
-        # Take a bit more than max_messages to check for better cut points if needed,
-        # but the request is to limit to max_messages.
-        # Let's start by looking at the window of size max_messages from the end.
-        start_index = len(self._messages) - self.max_messages
-        candidate_messages = self._messages[start_index:]
+        start_index = len(messages_list) - self.max_messages
+        candidate_messages = messages_list[start_index:]
 
-        # 2. Find a safe starting point within this window
         safe_start_offset = 0
         for i, msg in enumerate(candidate_messages):
-            # Check if it is a safe start:
-            # - Should usually be a UserPrompt or SystemPrompt (in ModelRequest)
-            # - Should NOT be a ToolReturn (which implies a preceding ToolCall)
-
             is_start_safe = False
-
             if isinstance(msg, ModelRequest):
-                # Check parts
-                # If it has UserPromptPart or SystemPromptPart, it's a good start.
-                # If it ONLY has ToolReturnPart, it is NOT a good start.
-
                 has_user_or_system = False
                 has_tool_return = False
-
                 for part in msg.parts:
                     if isinstance(part, (UserPromptPart, SystemPromptPart)):
                         has_user_or_system = True
                     if isinstance(part, ToolReturnPart):
                         has_tool_return = True
-
                 if has_user_or_system and not has_tool_return:
                     is_start_safe = True
-
-            # ModelResponse allows us to start? Not ideal, usually we want to start with User input.
-            # But if we must... actually usually we want to start with User.
 
             if is_start_safe:
                 safe_start_offset = i
                 break
 
-        # Apply the safe start
-        # If we didn't find ANY safe start in the last max_messages, we might be in trouble.
-        # But we default to the naive cut if we can't find a better one?
-        # Or maybe we search BACKWARDS from the naive cut point?
-        # Let's just take the best valid start we found in the tail.
-
-        self._messages = candidate_messages[safe_start_offset:]
+        # In-place update of the provided list is not possible like this,
+        # but the class usage currently expects self._messages to be updated.
+        if messages_list is self._messages:
+            self._messages = candidate_messages[safe_start_offset:]
 
     def clear(self) -> None:
         """Clear the message history."""
         self._messages = []
+        self._raw_messages = []
         if self._redis_client:
             try:
-                key = f"chainlite:history:{self.session_id}"
-                self._redis_client.delete(key)
+                key_ctx = f"chainlite:history:{self.session_id}"
+                key_raw = f"chainlite:history:raw:{self.session_id}"
+                self._redis_client.delete(key_ctx, key_raw)
             except Exception as e:
                 logger.warning(f"Failed to clear Redis history: {e}")
+
+    def export(
+        self,
+        export_type: str = "all",
+        export_format: str = "json",
+        output_dir: str = ".",
+    ) -> List[str]:
+        """Export conversation history.
+
+        Args:
+            export_type: 'all' (both), 'full' (raw), 'truncated' (context).
+            export_format: 'json' or 'markdown'.
+            output_dir: Directory to save the exported files.
+
+        Returns:
+            List of paths to exported files.
+        """
+        from pathlib import Path
+        from datetime import datetime
+
+        out_path = Path(output_dir) if output_dir else Path(".")
+        out_path.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        exported_files = []
+
+        to_export = []
+        if export_type in ["all", "full"]:
+            to_export.append(("raw", self._raw_messages))
+        if export_type in ["all", "truncated"]:
+            to_export.append(("truncated", self._messages))
+
+        for name, msgs in to_export:
+            filename = f"history_{self.session_id}_{name}_{timestamp}"
+            if export_format == "json":
+                file_path = out_path / f"{filename}.json"
+                self._export_json(msgs, file_path)
+            else:
+                file_path = out_path / f"{filename}.md"
+                self._export_markdown(msgs, file_path, name)
+            exported_files.append(str(file_path))
+
+        return exported_files
+
+    def _export_json(
+        self, messages: List[ModelMessage], path: Union[str, "Path"]
+    ) -> None:
+        adapter = TypeAdapter(List[ModelMessage])
+        with open(path, "w") as f:
+            f.write(adapter.dump_json(messages, indent=2).decode())
+        logger.info(f"History exported to JSON: {path}")
+
+    def _export_markdown(
+        self, messages: List[ModelMessage], path: Union[str, "Path"], mode: str
+    ) -> None:
+        lines = [f"# Conversation History ({mode.capitalize()})\n"]
+        lines.append(f"**Session ID**: {self.session_id}\n")
+        lines.append("---\n")
+
+        for msg in messages:
+            role = "Unknown"
+            if isinstance(msg, ModelRequest):
+                role = "User/System (Request)"
+            elif isinstance(msg, ModelResponse):
+                role = "AI (Response)"
+
+            lines.append(f"### {role}\n")
+            for part in msg.parts:
+                p_kind = getattr(part, "part_kind", "unknown")
+                lines.append(f"**[{p_kind}]**\n")
+                if hasattr(part, "content"):
+                    content = str(part.content)
+                    if p_kind == "tool-return":
+                        lines.append(f"```text\n{content}\n```\n")
+                    else:
+                        lines.append(f"{content}\n")
+                elif hasattr(part, "tool_name"):
+                    t_name = getattr(part, "tool_name", "unknown")
+                    args = getattr(part, "args", "{}")
+                    lines.append(f"Tool Call: `{t_name}` with args: `{args}`\n")
+            lines.append("---\n")
+
+        with open(path, "w") as f:
+            f.writelines(lines)
+        logger.info(f"History exported to Markdown: {path}")
