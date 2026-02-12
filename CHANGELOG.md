@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0](https://github.com/renext-ai/chainlite/compare/chainlite-v0.3.0...chainlite-v0.4.0) (2026-02-12)
+
+
+### Features
+
+* enable dynamic versioning via setuptools_scm ([f444da3](https://github.com/renext-ai/chainlite/commit/f444da3c7de82aa0ef55393fc8ed0dc741646ba0))
+
 ## [0.3.0](https://github.com/renext-ai/chainlite/compare/chainlite-v0.2.0...chainlite-v0.3.0) (2026-02-12)
 
 
