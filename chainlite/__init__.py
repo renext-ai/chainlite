@@ -1,3 +1,13 @@
+try:
+    from ._version import version as __version__
+except ImportError:
+    try:
+        from importlib.metadata import version, PackageNotFoundError
+
+        __version__ = version("chainlite")
+    except (ImportError, PackageNotFoundError):
+        __version__ = "unknown"
+
 """
 ChainLite - A lightweight wrapper for Pydantic AI.
 

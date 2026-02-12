@@ -96,3 +96,4 @@ Desktop.ini
 .agent/*
 
 */ce.yaml
+chainlite/_version.py
