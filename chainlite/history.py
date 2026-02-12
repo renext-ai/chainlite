@@ -209,6 +209,9 @@ class HistoryManager:
         import os
         from datetime import datetime
 
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         exported_files = []
 
