@@ -20,3 +20,6 @@ class ChainLiteConfig(BaseModel):
     session_id: str = "unused"
     redis_url: Optional[str] = None
     max_retries: Optional[int] = 1
+    # History Truncation and Summarization
+    # mode: "simple" | "auto" | "custom"
+    history_trunctor_config: Optional[Dict[str, Any]] = None
