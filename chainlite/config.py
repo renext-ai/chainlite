@@ -1,11 +1,13 @@
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class ChainLiteConfig(BaseModel):
     """
     Configuration model for ChainLite.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     config_name: Optional[str] = None
     system_prompt: Optional[str] = None
