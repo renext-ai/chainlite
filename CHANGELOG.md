@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0](https://github.com/renext-ai/chainlite/compare/chainlite-v0.2.0...chainlite-v0.3.0) (2026-02-12)
+
+
+### Features
+
+* Enforce strict Pydantic model validation for `ChainLiteConfig` and update various dependencies. ([7d3a87d](https://github.com/renext-ai/chainlite/commit/7d3a87d482209821de9b2d0e0fe0ea03c2805fa9))
+* feature/history truncation summarization ([7afb74e](https://github.com/renext-ai/chainlite/commit/7afb74e879b31e6acf1dba1b403f99d7268c4e92))
+* History truncation, summarization, export, and config refactor ([0c4c345](https://github.com/renext-ai/chainlite/commit/0c4c345a6e8afc651e0604e30e8d164b50e53ee0))
+* Implement pluggable history truncation with dual context/raw message storage and async message addition. ([73a3f12](https://github.com/renext-ai/chainlite/commit/73a3f1213251cd8f444a9af0dfb7dfc62ca4d9ff))
+
+
+### Bug Fixes
+
+* Resolve unit test failures for history export and truncation ([7bbf76c](https://github.com/renext-ai/chainlite/commit/7bbf76c0b740c56f01e0e2c7fbac5ed6a5510015))
+* Use pathlib for history export and skip auto-summary test on dummy key ([3028bdd](https://github.com/renext-ai/chainlite/commit/3028bdd0e54f90e14cc3fb66080c238451c7d627))
+
+
+### Documentation
+
+* Delete debug sync stream script and add documentation for history management. ([a01c152](https://github.com/renext-ai/chainlite/commit/a01c15291a6dd8a96c812baecd40b9dc15ef8b22))
+
 ## [0.2.0](https://github.com/renext-ai/chainlite/compare/chainlite-v0.1.0...chainlite-v0.2.0) (2026-02-10)
 
 

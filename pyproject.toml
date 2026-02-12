@@ -11,7 +11,7 @@ markers = [
 
 [project]
 name = "chainlite"
-version = "0.2.0"
+version = "0.3.0"
 description = "A lightweight chain utility"
 authors = [
   { name="Aiden Pearce", email="aiden@example.com" }
