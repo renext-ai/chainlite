@@ -1,7 +1,7 @@
 import asyncio
 from pathlib import Path
 from chainlite.history import HistoryManager
-from chainlite.trunctors import SimpleTrunctor
+from chainlite.truncators import SimpleTruncator
 from pydantic_ai.messages import ModelRequest, ToolReturnPart, UserPromptPart
 
 

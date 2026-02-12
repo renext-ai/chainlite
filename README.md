@@ -1,4 +1,5 @@
 # ChainLite
+
 ChainLite is a lightweight, configuration-driven utility for building LLM-powered applications. It wraps **Pydantic AI** to provide a simplified interface for managing LLM interactions, conversation history, and structured outputs.
 
 ## Key Features
@@ -16,12 +17,14 @@ ChainLite is a lightweight, configuration-driven utility for building LLM-powere
 Since ChainLite is not currently published on PyPI, you can install it directly from the source.
 
 ### Prerequisites
+
 - Python 3.10+
 - (Optional) Redis server for persistent history
 
 ### Install from Source
 
 **Option 1: Clone and Install**
+
 ```bash
 git clone https://github.com/aidenpearce/chainlite.git
 cd chainlite
@@ -29,9 +32,14 @@ pip install -e .
 ```
 
 **Option 2: Direct Install from GitHub**
+
 ```bash
+# Install latest (main branch)
 pip install "git+https://github.com/aidenpearce/chainlite.git"
-pixi add --pypi "chainlite @ git+https://github.com/aidenpearce/chainlite.git"
+
+# Install specific version (Note: tags are prefixed with 'chainlite-v')
+pip install "git+https://github.com/aidenpearce/chainlite.git@chainlite-v0.3.0"
+pixi add --pypi "chainlite @ git+https://github.com/aidenpearce/chainlite.git@chainlite-v0.3.0"
 ```
 
 ## Quick Start
@@ -42,7 +50,7 @@ Create a config file `agent.yaml`:
 
 ```yaml
 config_name: "my_assistant"
-llm_model_name: "openai:gpt-3.5-turbo"  # or "anthropic:claude-3-sonnet-20240229", "ollama:llama3"
+llm_model_name: "openai:gpt-3.5-turbo" # or "anthropic:claude-3-sonnet-20240229", "ollama:llama3"
 system_prompt: "You are a helpful assistant."
 prompt: "{{ input }}"
 temperature: 0.7
@@ -52,9 +60,9 @@ session_id: "my_session"
 ```
 
 Run it in Python:
+
 > **Note for Jupyter Notebook / Interactive Users:**
 > If you are running this in a Jupyter Notebook, IPython, or Streamlit, the event loop is already running. Do not use `asyncio.run()`. Instead, use `await agent.arun(...)` directly.
-
 
 ```python
 import asyncio
@@ -68,7 +76,7 @@ load_dotenv()
 async def main():
     # Initialize from config
     agent = ChainLite.load_config_from_yaml("agent.yaml")
-    
+
     # Run a simple query
     response = await agent.arun({"input": "Hello! Who are you?"})
     print(response)
@@ -105,7 +113,7 @@ Run it in Python:
 ```python
 async def main():
     agent = ChainLite.load_config_from_yaml("structured_agent.yaml")
-    
+
     # The response will be a dictionary matching the schema
     response = await agent.arun({"text": "John Doe is 30 years old."})
     print(response)
@@ -141,18 +149,18 @@ For detailed usage and examples of how to bind tools and inject dependencies, pl
 
 The `ChainLiteConfig` support the following key parameters:
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `llm_model_name` | `str` | The model identifier (e.g., `openai:gpt-4`, `ollama:llama3`). |
-| `system_prompt` | `str` | The system instruction for the LLM. |
-| `prompt` | `str` | The user prompt template. Supports Jinja2 syntax (e.g., `{{ variable }}`, `{% if ... %}`). |
-| `use_history` | `bool` | Enable conversation history tracking. |
-| `session_id` | `str` | Unique ID for the conversation session (required if `use_history=True`). |
-| `redis_url` | `str` | URL for Redis instance to persist history. |
-| `temperature` | `float` | Sampling temperature (0.0 to 1.0). |
-| `model_settings` | `Dict[str, Any]` | Provider-specific model settings passed through to Pydantic AI. |
-| `max_retries` | `int` | Number of retries for failed requests. |
-| `output_parser` | `List[Dict[str, Any]]` | Schema definition for structured output extraction. |
+| Parameter        | Type                   | Description                                                                                |
+| ---------------- | ---------------------- | ------------------------------------------------------------------------------------------ |
+| `llm_model_name` | `str`                  | The model identifier (e.g., `openai:gpt-4`, `ollama:llama3`).                              |
+| `system_prompt`  | `str`                  | The system instruction for the LLM.                                                        |
+| `prompt`         | `str`                  | The user prompt template. Supports Jinja2 syntax (e.g., `{{ variable }}`, `{% if ... %}`). |
+| `use_history`    | `bool`                 | Enable conversation history tracking.                                                      |
+| `session_id`     | `str`                  | Unique ID for the conversation session (required if `use_history=True`).                   |
+| `redis_url`      | `str`                  | URL for Redis instance to persist history.                                                 |
+| `temperature`    | `float`                | Sampling temperature (0.0 to 1.0).                                                         |
+| `model_settings` | `Dict[str, Any]`       | Provider-specific model settings passed through to Pydantic AI.                            |
+| `max_retries`    | `int`                  | Number of retries for failed requests.                                                     |
+| `output_parser`  | `List[Dict[str, Any]]` | Schema definition for structured output extraction.                                        |
 
 ## Development
 
@@ -164,26 +172,30 @@ This project uses [Pixi](https://prefix.dev/docs/pixi/overview) for dependency m
    Follow the [official installation guide](https://prefix.dev/docs/pixi/installation).
 
 2. **Install Dependencies**:
+
    ```bash
    pixi install
    ```
 
 3. **Run Scripts**:
    You can run python scripts directly using `pixi run`:
+
    ```bash
    pixi run python tests/interactive_chat.py --config tests/chat_agent.yaml
    ```
-   
+
    Or spawn a shell with the environment activated:
+
    ```bash
    pixi shell
    ```
 
 4. **Manage Dependencies**:
+
    ```bash
    # Add a new dependency
    pixi add <package_name>
-   
+
    # Add a PyPI dependency
    pixi add --pypi <package_name>
    ```
@@ -191,6 +203,7 @@ This project uses [Pixi](https://prefix.dev/docs/pixi/overview) for dependency m
 ### Using Pip (Alternative)
 
 1. **Install Dependencies**:
+
    ```bash
    pip install -e .
    # or include test tools
@@ -214,6 +227,13 @@ This project uses [Pixi](https://prefix.dev/docs/pixi/overview) for dependency m
 - Release Please automatically prepares version bumps and changelog updates via release PRs.
 - A publish workflow releases package artifacts to PyPI when a GitHub Release is published.
 - PyPI publish is gated by repository variable `PYPI_PUBLISH_ENABLED=true`; otherwise workflow logs a skip and exits successfully.
+
+### Tagging Convention
+
+Due to the use of `release-please` in manifest mode, git tags are prefixed with the package name:
+
+- Format: `chainlite-vX.Y.Z` (e.g., `chainlite-v0.3.0`)
+- **Important**: When referencing tags in `pip install` or CI/CD scripts, ensure you use the full `chainlite-v` prefix.
 
 ### Release Policy
 

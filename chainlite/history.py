@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from .core import ChainLite
 
 
-from .trunctors import BaseHistoryTrunctor
+from .truncators import BaseHistoryTruncator
 
 
 class HistoryManager:
@@ -25,7 +25,7 @@ class HistoryManager:
         session_id: str,
         redis_url: Optional[str] = None,
         max_messages: int = 45,
-        truncator: Optional[BaseHistoryTrunctor] = None,
+        truncator: Optional[BaseHistoryTruncator] = None,
     ):
         self.session_id = session_id
         self.redis_url = redis_url

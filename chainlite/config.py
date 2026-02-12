@@ -22,4 +22,4 @@ class ChainLiteConfig(BaseModel):
     max_retries: Optional[int] = 1
     # History Truncation and Summarization
     # mode: "simple" | "auto" | "custom"
-    history_trunctor_config: Optional[Dict[str, Any]] = None
+    history_truncator_config: Optional[Dict[str, Any]] = None

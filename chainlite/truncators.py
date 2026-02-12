@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from .core import ChainLite
 
 
-class BaseHistoryTrunctor:
+class BaseHistoryTruncator:
     """Base class for history truncation strategies."""
 
     async def atruncate(
@@ -25,7 +25,7 @@ class BaseHistoryTrunctor:
         return messages
 
 
-class SimpleTrunctor(BaseHistoryTrunctor):
+class SimpleTruncator(BaseHistoryTruncator):
     """Simple character-based truncation for Tool results."""
 
     def __init__(self, threshold: int = 5000):
@@ -66,7 +66,7 @@ class SimpleTrunctor(BaseHistoryTrunctor):
         return self._process_messages(messages)
 
 
-class AutoSummarizor(BaseHistoryTrunctor):
+class AutoSummarizor(BaseHistoryTruncator):
     """Implicitly uses a specified agent (defaults to primary) to summarize tool results."""
 
     def __init__(
@@ -156,7 +156,7 @@ class AutoSummarizor(BaseHistoryTrunctor):
         return new_messages
 
 
-class ChainLiteSummarizor(BaseHistoryTrunctor):
+class ChainLiteSummarizor(BaseHistoryTruncator):
     """Recursive ChainLite summarizer."""
 
     def __init__(

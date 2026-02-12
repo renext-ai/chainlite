@@ -84,15 +84,15 @@ class ChainLite:
 
         # Truncator and History Setup
         truncator = None
-        if self.config.history_trunctor_config:
-            from .trunctors import SimpleTrunctor, AutoSummarizor, ChainLiteSummarizor
+        if self.config.history_truncator_config:
+            from .truncators import SimpleTruncator, AutoSummarizor, ChainLiteSummarizor
 
-            t_config = self.config.history_trunctor_config
+            t_config = self.config.history_truncator_config
             mode = t_config.get("mode")
             threshold = t_config.get("truncation_threshold", 5000)
 
             if mode == "simple":
-                truncator = SimpleTrunctor(threshold=threshold)
+                truncator = SimpleTruncator(threshold=threshold)
             elif mode == "auto":
                 truncator = AutoSummarizor(
                     threshold=threshold, model_name=self.config.llm_model_name
@@ -106,7 +106,7 @@ class ChainLite:
                     )
                 if not path and not dict_cfg:
                     raise ValueError(
-                        "Must specify either 'summarizor_config_path' or 'summarizor_config_dict' for custom trunctor"
+                        "Must specify either 'summarizor_config_path' or 'summarizor_config_dict' for custom truncator"
                     )
                 truncator = ChainLiteSummarizor(
                     config_or_path=path or dict_cfg, threshold=threshold

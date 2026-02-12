@@ -63,7 +63,7 @@ llm_model_name: "openai:gpt-4"
 # redis_url: "redis://localhost:6379/0"
 
 # (Optional) The strategy to use for truncating long tool results in history.
-# history_trunctor_config:
+# history_truncator_config:
 #   mode: "simple"  # simple, auto, custom
 #   truncation_threshold: 5000
 #   # For "custom" mode:

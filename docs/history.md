@@ -4,11 +4,11 @@ ChainLite provides a robust system for managing conversation history, ensuring t
 
 ## Configuration
 
-History management is configured via the `history_trunctor_config` section in your YAML configuration file.
+History management is configured via the `history_truncator_config` section in your YAML configuration file.
 
 ```yaml
 # Example Configuration
-history_trunctor_config:
+history_truncator_config:
   mode: "simple" # Options: "simple", "auto", "custom"
   truncation_threshold: 5000
 ```
@@ -47,7 +47,7 @@ This mode allows you to define a **separate ChainLite agent** dedicated to summa
 You must provide either a path to a config file OR a config dictionary.
 
 ```yaml
-history_trunctor_config:
+history_truncator_config:
   mode: "custom"
   truncation_threshold: 5000
   summarizor_config_path: "tests/prompts/custom_summarizer.yaml"

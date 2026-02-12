@@ -1,13 +1,13 @@
 import asyncio
 from chainlite import ChainLite, ChainLiteConfig
-from chainlite.trunctors import SimpleTrunctor
+from chainlite.truncators import SimpleTruncator
 from pydantic_ai.messages import ModelRequest, ToolReturnPart
 import os
 
 
 async def test_simple_truncation():
     print("\n--- Testing Simple Truncation ---")
-    trunctor = SimpleTrunctor(threshold=20)
+    truncator = SimpleTruncator(threshold=20)
 
     # Simulate a tool return
     msgs = [
@@ -15,14 +15,14 @@ async def test_simple_truncation():
             parts=[
                 ToolReturnPart(
                     tool_name="big_tool",
-                    content="This is a very long content that should be truncated by the simple trunctor.",
+                    content="This is a very long content that should be truncated by the simple truncator.",
                     tool_call_id="call_1",
                 )
             ]
         )
     ]
 
-    processed = trunctor.truncate(msgs, context="What happened?")
+    processed = truncator.truncate(msgs, context="What happened?")
     print(f"Context content: {processed[0].parts[0].content}")
 
     assert "... [Truncated due to length]" in processed[0].parts[0].content
@@ -39,7 +39,7 @@ async def test_auto_summarization():
     config = ChainLiteConfig(
         llm_model_name="openai:gpt-4o-mini",
         use_history=True,
-        history_trunctor_config={"mode": "auto", "truncation_threshold": 50},
+        history_truncator_config={"mode": "auto", "truncation_threshold": 50},
     )
     cl = ChainLite(config)
 

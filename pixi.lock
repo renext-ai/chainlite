@@ -24,6 +24,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/ncurses-6.5-h5e97a16_3.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/openssl-3.6.0-h5503f6c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/packaging-25.0-pyh29332c3_1.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/pip-26.0.1-pyh145f28c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pluggy-1.6.0-pyhf9edf01_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pygments-2.19.2-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pytest-9.0.2-pyhcf101f3_0.conda
@@ -468,11 +469,11 @@ packages:
   requires_python: '>=3.9'
 - pypi: ./
   name: chainlite
-  version: 0.2.0
-  sha256: 696eb667661e6dbe393740baa68027cd22cdd0cdde228105e2c58a2bd6aaa143
+  version: 0.3.1.dev0+ga5a2686e4.d20260212
+  sha256: 01d580ce29e655fabb8680c3451a6f1f2ddd26ef91e80c12b592391697d0b581
   requires_dist:
   - pydantic-ai>=1.46.0
-  - pydantic-ai-slim[openai,anthropic,google,mistral]>=1.46.0
+  - pydantic-ai-slim[anthropic,google,mistral,openai]>=1.46.0
   - pydantic>=2.0.0
   - httpx>=0.27.0
   - loguru>=0.7.0
@@ -1797,6 +1798,17 @@ packages:
   - pytest>=6.0.1 ; extra == 'test'
   - pytest-md-report>=0.6.2 ; extra == 'test'
   requires_python: '>=3.9'
+- conda: https://conda.anaconda.org/conda-forge/noarch/pip-26.0.1-pyh145f28c_0.conda
+  sha256: 5f66ea31d62188c266c5a8752119b0cc90a5bf05963f665cf48a33e0ec58d39c
+  md5: 09a970fbf75e8ed1aa633827ded6aa4f
+  depends:
+  - python >=3.13.0a0
+  license: MIT
+  license_family: MIT
+  purls:
+  - pkg:pypi/pip?source=compressed-mapping
+  size: 1180743
+  timestamp: 1770270312477
 - pypi: https://files.pythonhosted.org/packages/cb/28/3bfe2fa5a7b9c46fe7e13c97bda14c895fb10fa2ebf1d0abb90e0cea7ee1/platformdirs-4.5.1-py3-none-any.whl
   name: platformdirs
   version: 4.5.1

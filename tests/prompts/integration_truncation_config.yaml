@@ -3,7 +3,7 @@ llm_model_name: "openai:gpt-4o-mini"
 system_prompt: "You are a test assistant capable of generating various types of content. Use the provided tools to help with long-form data generation and simulation."
 use_history: true
 session_id: "integration_test_session"
-history_trunctor_config:
+history_truncator_config:
   mode: "simple"
   truncation_threshold: 100
 config_name: "integration_truncation_config"
