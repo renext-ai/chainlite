@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0](https://github.com/renext-ai/chainlite/compare/chainlite-v0.3.0...chainlite-v0.4.0) (2026-02-12)
+
+
+### Features
+
+* enable dynamic versioning via setuptools_scm ([f444da3](https://github.com/renext-ai/chainlite/commit/f444da3c7de82aa0ef55393fc8ed0dc741646ba0))
+* enhance history management with dynamic system prompt storage and improved markdown/JSON exports ([919868d](https://github.com/renext-ai/chainlite/commit/919868dde0ea531ce6497a48d08330db636c7e1d))
+
 ## [0.3.0](https://github.com/renext-ai/chainlite/compare/chainlite-v0.2.0...chainlite-v0.3.0) (2026-02-12)
 
 
