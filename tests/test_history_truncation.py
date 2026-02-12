@@ -30,13 +30,14 @@ async def test_simple_truncation():
 
 
 async def test_auto_summarization():
-    if not (os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")):
-        print("Skipping auto summarization test (no API key).")
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key or api_key == "dummy" or api_key == "your_openai_api_key_here":
+        print("Skipping auto summarization test (no valid API key).")
         return
 
     print("\n--- Testing Auto Summarization ---")
     config = ChainLiteConfig(
-        llm_model_name="gpt-4o-mini",
+        llm_model_name="openai:gpt-4o-mini",
         use_history=True,
         history_trunctor_config={"mode": "auto", "truncation_threshold": 50},
     )

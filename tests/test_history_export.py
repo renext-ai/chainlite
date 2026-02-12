@@ -1,5 +1,5 @@
 import asyncio
-import os
+from pathlib import Path
 from chainlite.history import HistoryManager
 from chainlite.trunctors import SimpleTrunctor
 from pydantic_ai.messages import ModelRequest, ToolReturnPart, UserPromptPart
@@ -37,18 +37,18 @@ async def test_history_export():
     print(f"Exported Markdown files: {md_files}")
 
     for f in json_files + md_files:
-        assert os.path.exists(f)
+        path = Path(f)
+        assert path.exists()
         print(f"Verified existence: {f}")
         # Clean up
-        os.remove(f)
+        path.unlink()
 
-    if os.path.exists("temp_export"):
-        os.rmdir("temp_export")
+    if Path("temp_export").exists():
+        Path("temp_export").rmdir()
 
     print("PASS: History export verified.")
 
 
 if __name__ == "__main__":
-    if not os.path.exists("temp_export"):
-        os.makedirs("temp_export")
+    Path("temp_export").mkdir(exist_ok=True)
     asyncio.run(test_history_export())

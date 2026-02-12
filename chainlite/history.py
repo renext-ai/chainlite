@@ -206,11 +206,11 @@ class HistoryManager:
         Returns:
             List of paths to exported files.
         """
-        import os
+        from pathlib import Path
         from datetime import datetime
 
-        if output_dir:
-            os.makedirs(output_dir, exist_ok=True)
+        out_path = Path(output_dir) if output_dir else Path(".")
+        out_path.mkdir(parents=True, exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         exported_files = []
@@ -224,23 +224,25 @@ class HistoryManager:
         for name, msgs in to_export:
             filename = f"history_{self.session_id}_{name}_{timestamp}"
             if export_format == "json":
-                path = os.path.join(output_dir, f"{filename}.json")
-                self._export_json(msgs, path)
+                file_path = out_path / f"{filename}.json"
+                self._export_json(msgs, file_path)
             else:
-                path = os.path.join(output_dir, f"{filename}.md")
-                self._export_markdown(msgs, path, name)
-            exported_files.append(path)
+                file_path = out_path / f"{filename}.md"
+                self._export_markdown(msgs, file_path, name)
+            exported_files.append(str(file_path))
 
         return exported_files
 
-    def _export_json(self, messages: List[ModelMessage], path: str) -> None:
+    def _export_json(
+        self, messages: List[ModelMessage], path: Union[str, "Path"]
+    ) -> None:
         adapter = TypeAdapter(List[ModelMessage])
         with open(path, "w") as f:
             f.write(adapter.dump_json(messages, indent=2).decode())
         logger.info(f"History exported to JSON: {path}")
 
     def _export_markdown(
-        self, messages: List[ModelMessage], path: str, mode: str
+        self, messages: List[ModelMessage], path: Union[str, "Path"], mode: str
     ) -> None:
         lines = [f"# Conversation History ({mode.capitalize()})\n"]
         lines.append(f"**Session ID**: {self.session_id}\n")
