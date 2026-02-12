@@ -1,0 +1,4 @@
+llm_model_name: "openai:gpt-3.5-turbo"
+system_prompt: "You are a summarizer. Provide a one-sentence summary."
+prompt: "{{ input }}"
+config_name: "summarizer_sub_agent"

@@ -16,7 +16,7 @@ with support for streaming, structured output, and conversation history.
 """
 
 from .core import ChainLite
-from .config import ChainLiteConfig
+from .config import ChainLiteConfig, SubAgentConfig
 from .streaming import stream_sse
 
-__all__ = ["ChainLite", "ChainLiteConfig", "stream_sse"]
+__all__ = ["ChainLite", "ChainLiteConfig", "SubAgentConfig", "stream_sse"]

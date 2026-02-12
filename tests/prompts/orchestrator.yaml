@@ -1,0 +1,11 @@
+config_name: "orchestrator"
+llm_model_name: "openai:gpt-4"
+system_prompt: "You are a coordinator. Use the available tools to help the user."
+prompt: "{{ input }}"
+sub_agents:
+  - name: "translate"
+    config: "translator.yaml"
+    description: "Translate text to French."
+  - name: "summarize"
+    config: "summarizer.yaml"
+    description: "Summarize long text into one sentence."

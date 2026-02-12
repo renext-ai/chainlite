@@ -141,6 +141,9 @@ class ChainLite:
         if settings_dict:
             model_settings = ModelSettings(**settings_dict)
 
+        # Build sub-agent tools
+        sub_agent_tools = self._build_sub_agent_tools()
+
         # Create the agent
         if self.output_model:
             self.agent = Agent(
@@ -148,12 +151,14 @@ class ChainLite:
                 instructions=instructions,
                 output_type=self.output_model,
                 retries=self.config.max_retries or 3,
+                tools=sub_agent_tools,
             )
         else:
             self.agent = Agent(
                 model_string,
                 instructions=instructions,
                 retries=self.config.max_retries or 3,
+                tools=sub_agent_tools,
             )
 
         self._model_settings = model_settings
@@ -191,6 +196,63 @@ class ChainLite:
             )
 
         return new_agent
+
+    def _build_sub_agent_tools(self) -> list:
+        """Build pydantic-ai Tool objects for each configured sub-agent."""
+        if not self.config.sub_agents:
+            return []
+
+        from pydantic_ai import Tool
+
+        tools = []
+        for sa_config in self.config.sub_agents:
+            tool = self._make_sub_agent_tool(
+                name=sa_config.name,
+                config_path=sa_config.config,
+                description=sa_config.description,
+            )
+            tools.append(tool)
+            logger.info(
+                f"Registered sub-agent tool '{sa_config.name}' "
+                f"(config: {sa_config.config})"
+            )
+
+        return tools
+
+    @staticmethod
+    def _make_sub_agent_tool(name: str, config_path: str, description: str):
+        """Create a pydantic-ai Tool wrapping a sub-agent ChainLite instance.
+
+        The sub-agent is lazily instantiated on first tool invocation to avoid
+        eager initialization overhead and potential circular dependencies.
+        """
+        from pydantic_ai import Tool
+
+        _sub_chain_holder: dict = {"instance": None}
+
+        async def _tool_fn(input: str) -> str:
+            try:
+                if _sub_chain_holder["instance"] is None:
+                    _sub_chain_holder["instance"] = (
+                        ChainLite.load_config_from_yaml(config_path)
+                    )
+                result = await _sub_chain_holder["instance"].arun({"input": input})
+                if isinstance(result, dict):
+                    return json.dumps(result, ensure_ascii=False)
+                return str(result)
+            except Exception as e:
+                logger.warning(f"Sub-agent '{name}' error: {e}")
+                return f"Error from sub-agent '{name}': {e}"
+
+        _tool_fn.__name__ = name
+        _tool_fn.__qualname__ = name
+
+        return Tool(
+            _tool_fn,
+            takes_ctx=False,
+            name=name,
+            description=description,
+        )
 
     def _build_instructions(self, context: Dict[str, Any] = None) -> Optional[str]:
         """Build system instructions from config, optionally rendering with context."""
@@ -719,5 +781,13 @@ class ChainLite:
 
         if yaml_data.get("config_name") is None:
             yaml_data["config_name"] = str(yaml_file_path)
+
+        # Resolve sub-agent config paths relative to parent YAML directory
+        if yaml_data.get("sub_agents"):
+            parent_dir = os.path.dirname(os.path.abspath(yaml_file_path))
+            for sa in yaml_data["sub_agents"]:
+                config_path = sa.get("config", "")
+                if config_path and not os.path.isabs(config_path):
+                    sa["config"] = os.path.join(parent_dir, config_path)
 
         return ChainLite(ChainLiteConfig(**yaml_data))
