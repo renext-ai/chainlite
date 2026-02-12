@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1](https://github.com/renext-ai/chainlite/compare/chainlite-v0.4.0...chainlite-v0.4.1) (2026-02-12)
+
+
+### Continuous Integration
+
+* fix setuptools_scm version resolution in GitHub Actions ([9fc4f1a](https://github.com/renext-ai/chainlite/commit/9fc4f1a7ed4a694bde037b8329fc7bb7c55955d9))
+
 ## [0.4.0](https://github.com/renext-ai/chainlite/compare/chainlite-v0.3.0...chainlite-v0.4.0) (2026-02-12)
 
 
