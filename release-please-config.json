@@ -5,7 +5,8 @@
       "release-type": "python",
       "package-name": "chainlite",
       "include-v-in-tag": true,
-      "changelog-path": "CHANGELOG.md"
+      "changelog-path": "CHANGELOG.md",
+      "release-as": "0.4.1"
     }
   }
 }
