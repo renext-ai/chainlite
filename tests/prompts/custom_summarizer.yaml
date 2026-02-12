@@ -1,0 +1,5 @@
+llm_model_name: "openai:gpt-4o-mini"
+system_prompt: "You are a specialized summarizer. Summarize the user's input concisely and prefix the result with '[CUSTOM SUMMARY]: '."
+use_history: false
+session_id: "custom_summarizer_session"
+config_name: "custom_summarizer"

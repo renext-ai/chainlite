@@ -129,7 +129,7 @@ async def integration_history_cli(config_path: str):
 async def main():
     parser = argparse.ArgumentParser(description="ChainLite Integration Test CLI")
     parser.add_argument(
-        "--config", type=str, default="tests/integration_truncation_config.yaml"
+        "--config", type=str, default="tests/prompts/integration_truncation_config.yaml"
     )
     args = parser.parse_args()
 
