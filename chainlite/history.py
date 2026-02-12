@@ -1,3 +1,4 @@
+import json
 from typing import Optional, List, Dict, Any, Union, TYPE_CHECKING
 from loguru import logger
 from pydantic import TypeAdapter
@@ -26,11 +27,13 @@ class HistoryManager:
         redis_url: Optional[str] = None,
         max_messages: int = 45,
         truncator: Optional[BaseHistoryTruncator] = None,
+        system_prompt: Optional[str] = None,
     ):
         self.session_id = session_id
         self.redis_url = redis_url
         self.max_messages = max_messages
         self.truncator = truncator
+        self.system_prompt = system_prompt
         self._redis_client = None
         self._messages: List[ModelMessage] = []  # Context History (for LLM)
         self._raw_messages: List[ModelMessage] = []  # Raw History (for Audit)
@@ -68,6 +71,11 @@ class HistoryManager:
             if data_raw:
                 adapter = TypeAdapter(List[ModelMessage])
                 self._raw_messages = adapter.validate_json(data_raw)
+
+            key_setup = f"chainlite:history:system_prompt:{self.session_id}"
+            data_setup = self._redis_client.get(key_setup)
+            if data_setup:
+                self.system_prompt = data_setup.decode("utf-8")
         except Exception as e:
             logger.warning(f"Failed to load history from Redis: {e}")
 
@@ -84,6 +92,10 @@ class HistoryManager:
             adapter = TypeAdapter(List[ModelMessage])
             self._redis_client.set(key_ctx, adapter.dump_json(self._messages))
             self._redis_client.set(key_raw, adapter.dump_json(self._raw_messages))
+
+            if self.system_prompt:
+                key_setup = f"chainlite:history:system_prompt:{self.session_id}"
+                self._redis_client.set(key_setup, self.system_prompt)
         except Exception as e:
             logger.warning(f"Failed to save history to Redis: {e}")
 
@@ -186,7 +198,8 @@ class HistoryManager:
             try:
                 key_ctx = f"chainlite:history:{self.session_id}"
                 key_raw = f"chainlite:history:raw:{self.session_id}"
-                self._redis_client.delete(key_ctx, key_raw)
+                key_setup = f"chainlite:history:system_prompt:{self.session_id}"
+                self._redis_client.delete(key_ctx, key_raw, key_setup)
             except Exception as e:
                 logger.warning(f"Failed to clear Redis history: {e}")
 
@@ -195,6 +208,7 @@ class HistoryManager:
         export_type: str = "all",
         export_format: str = "json",
         output_dir: str = ".",
+        output_file: Optional[str] = None,
     ) -> List[str]:
         """Export conversation history.
 
@@ -202,6 +216,7 @@ class HistoryManager:
             export_type: 'all' (both), 'full' (raw), 'truncated' (context).
             export_format: 'json' or 'markdown'.
             output_dir: Directory to save the exported files.
+            output_file: Optional direct path to the output file.
 
         Returns:
             List of paths to exported files.
@@ -209,10 +224,14 @@ class HistoryManager:
         from pathlib import Path
         from datetime import datetime
 
-        out_path = Path(output_dir) if output_dir else Path(".")
-        out_path.mkdir(parents=True, exist_ok=True)
+        if output_file:
+            output_file_path = Path(output_file)
+            output_file_path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            out_path = Path(output_dir) if output_dir else Path(".")
+            out_path.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         exported_files = []
 
         to_export = []
@@ -222,12 +241,23 @@ class HistoryManager:
             to_export.append(("truncated", self._messages))
 
         for name, msgs in to_export:
-            filename = f"history_{self.session_id}_{name}_{timestamp}"
+            if output_file:
+                if name == "raw":
+                    file_path = output_file_path
+                else:  # truncated
+                    file_path = output_file_path.with_name(
+                        f"{output_file_path.stem}_truncated{output_file_path.suffix}"
+                    )
+            else:
+                filename = f"history_{self.session_id}_{name}_{timestamp}"
+                if export_format == "json":
+                    file_path = out_path / f"{filename}.json"
+                else:
+                    file_path = out_path / f"{filename}.md"
+
             if export_format == "json":
-                file_path = out_path / f"{filename}.json"
                 self._export_json(msgs, file_path)
             else:
-                file_path = out_path / f"{filename}.md"
                 self._export_markdown(msgs, file_path, name)
             exported_files.append(str(file_path))
 
@@ -237,40 +267,94 @@ class HistoryManager:
         self, messages: List[ModelMessage], path: Union[str, "Path"]
     ) -> None:
         adapter = TypeAdapter(List[ModelMessage])
+        data = {
+            "session_id": self.session_id,
+            "system_prompt": self.system_prompt,
+            "messages": adapter.dump_python(messages, mode="json"),
+        }
         with open(path, "w") as f:
-            f.write(adapter.dump_json(messages, indent=2).decode())
+            json.dump(data, f, indent=2, ensure_ascii=False)
         logger.info(f"History exported to JSON: {path}")
 
     def _export_markdown(
         self, messages: List[ModelMessage], path: Union[str, "Path"], mode: str
     ) -> None:
-        lines = [f"# Conversation History ({mode.capitalize()})\n"]
-        lines.append(f"**Session ID**: {self.session_id}\n")
-        lines.append("---\n")
+        # 1. Header and Session Info
+        lines = [f"# 💬 Conversation History ({mode.capitalize()})\n"]
+        lines.append(f"> **Session ID**: `{self.session_id}`\n\n")
+
+        if self.system_prompt:
+            lines.append(
+                "<details>\n<summary><strong>⚙️ System Prompt (Instructions & Tools)</strong></summary>\n\n"
+            )
+            lines.append(f"{self.system_prompt}\n")
+            lines.append("\n</details>\n\n")
+
+        lines.append("\n\n")
 
         for msg in messages:
-            role = "Unknown"
-            if isinstance(msg, ModelRequest):
-                role = "User/System (Request)"
-            elif isinstance(msg, ModelResponse):
-                role = "AI (Response)"
+            # 2. Determine the role by inspecting the first part of the message
+            role_icon = "❓"
+            role_title = "Unknown"
 
-            lines.append(f"### {role}\n")
+            if isinstance(msg, ModelRequest):
+                # Default to User, but check specifically for System or Tool Return
+                role_icon = "👤"
+                role_title = "User Request"
+
+                if msg.parts:
+                    first_part = msg.parts[0]
+                    # In pydantic-ai, we check the part kind or type
+                    p_kind = getattr(first_part, "part_kind", "")
+
+                    if p_kind == "system-prompt":
+                        role_icon = "⚙️"
+                        role_title = "System Instruction"
+                    elif p_kind == "tool-return":
+                        role_icon = "🛠️"
+                        role_title = "Tool Execution Result"
+                    elif p_kind == "user-prompt":
+                        role_icon = "👤"
+                        role_title = "User Request"
+
+            elif isinstance(msg, ModelResponse):
+                role_icon = "🤖"
+                role_title = "AI Response"
+
+            lines.append(f"#### {role_icon} {role_title}\n")
+
+            # 3. Render parts
             for part in msg.parts:
                 p_kind = getattr(part, "part_kind", "unknown")
-                lines.append(f"**[{p_kind}]**\n")
+
                 if hasattr(part, "content"):
                     content = str(part.content)
                     if p_kind == "tool-return":
+                        # Tool returns usually contain data, better in code block
+                        lines.append(
+                            f"**Output ({getattr(part, 'tool_name', 'unknown')}):**\n"
+                        )
                         lines.append(f"```text\n{content}\n```\n")
                     else:
                         lines.append(f"{content}\n")
-                elif hasattr(part, "tool_name"):
-                    t_name = getattr(part, "tool_name", "unknown")
-                    args = getattr(part, "args", "{}")
-                    lines.append(f"Tool Call: `{t_name}` with args: `{args}`\n")
-            lines.append("---\n")
 
-        with open(path, "w") as f:
+                elif hasattr(part, "tool_name"):
+                    # This is usually inside ModelResponse
+                    t_name = getattr(part, "tool_name", "unknown")
+                    args = getattr(part, "args", {})
+
+                    lines.append(f"**🔨 Tool Call:** `{t_name}`\n")
+                    try:
+                        if isinstance(args, dict):
+                            json_str = json.dumps(args, indent=2, ensure_ascii=False)
+                            lines.append(f"```json\n{json_str}\n```\n")
+                        else:
+                            lines.append(f"```text\n{args}\n```\n")
+                    except Exception:
+                        lines.append(f"`{args}`\n")
+
+            lines.append("\n\n")
+
+        with open(path, "w", encoding="utf-8") as f:
             f.writelines(lines)
         logger.info(f"History exported to Markdown: {path}")

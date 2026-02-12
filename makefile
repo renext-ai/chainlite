@@ -11,4 +11,4 @@ history-cli:
 test:
 	pytest
 test-integration:
-	OPENAI_API_KEY=$$OPENAI_API_KEY pytest -m integration
+	OPENAI_API_KEY=$$OPENAI_API_KEY pixi run pytest -m integration

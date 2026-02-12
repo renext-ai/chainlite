@@ -122,6 +122,9 @@ class ChainLite:
                 redis_url=self.config.redis_url,
                 truncator=truncator,
             )
+            # Set initial system prompt if agent is already set up (unlikely here but for safety)
+            if self.agent:
+                self.history_manager.system_prompt = self._get_full_system_prompt()
 
         # Build system instructions
         instructions = self._build_instructions()
@@ -324,6 +327,11 @@ class ChainLite:
             raise ValueError(
                 "Agent is not set up. Please call `setup_chain` method before running."
             )
+
+        # Ensure HistoryManager has the full system prompt (including dynamically added tools)
+        if self.history_manager and not self.history_manager.system_prompt:
+            self.history_manager.system_prompt = self._get_full_system_prompt()
+
         prompt = await self._build_prompt(input_data)
         message_history = self._get_message_history()
         return prompt, message_history
@@ -476,8 +484,7 @@ class ChainLite:
         Yields:
             Text chunks from the streaming response.
         """
-        prompt = asyncio.run(self._build_prompt(input_data))
-        message_history = self._get_message_history()
+        prompt, message_history = asyncio.run(self._prepare_run(input_data))
 
         # Get agent (potentially dynamic)
         agent = asyncio.run(self._get_agent_for_run(input_data))
@@ -522,8 +529,7 @@ class ChainLite:
         Asynchronously processes input data through the agent, yielding text chunks.
         Uses _StreamProcessor to handle part transitions and inject headers/tags.
         """
-        prompt = await self._build_prompt(input_data)
-        message_history = self._get_message_history()
+        prompt, message_history = await self._prepare_run(input_data)
         agent = await self._get_agent_for_run(input_data)
 
         async with agent.run_stream(
@@ -569,6 +575,47 @@ class ChainLite:
         if self.history_manager:
             return self.history_manager.messages
         return None
+
+    def _get_full_system_prompt(self) -> str:
+        """Extract instructions and tool definitions from the agent."""
+        if not self.agent:
+            return ""
+
+        lines = []
+        # 1. Instructions
+        if hasattr(self.agent, "_instructions") and self.agent._instructions:
+            lines.append("## Instructions\n")
+            for inst in self.agent._instructions:
+                lines.append(f"{inst}\n")
+
+        # 2. Tools
+        if (
+            hasattr(self.agent, "_function_toolset")
+            and self.agent._function_toolset.tools
+        ):
+            if lines:
+                lines.append("\n")
+            lines.append("## Tools\n")
+            for name, tool in self.agent._function_toolset.tools.items():
+                lines.append(f"\n### Tool: {name}")
+                if tool.description:
+                    lines.append(f"**Description**: {tool.description}")
+
+                # Build a complete tool schema for audit
+                schema_data = {
+                    "name": tool.name,
+                    "description": tool.description,
+                }
+                if hasattr(tool, "function_schema"):
+                    # Use json_schema from pydantic-ai's FunctionSchema
+                    schema_data["parameters"] = getattr(
+                        tool.function_schema, "json_schema", {}
+                    )
+
+                lines.append("```json")
+                lines.append(json.dumps(schema_data, indent=2, ensure_ascii=False))
+                lines.append("```")
+        return "\n".join(lines)
 
     @staticmethod
     def parse_input_variables_from_prompt(text: str) -> List[str]:
