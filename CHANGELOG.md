@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0](https://github.com/renext-ai/chainlite/compare/chainlite-v0.4.1...chainlite-v0.5.0) (2026-02-13)
+
+
+### Features
+
+* add lazy trucators ([d8fd832](https://github.com/renext-ai/chainlite/commit/d8fd8323dd530940d0fcad65e5ce99a9b25c6466))
+* add lazy trucators and pydantic-ai adapter ([ba99987](https://github.com/renext-ai/chainlite/commit/ba9998735c1a67bb55a6f99574ab29fc2d9c2e82))
+* Implement token usage tracking and conduct experiments on history truncation strategies. ([c58f4bf](https://github.com/renext-ai/chainlite/commit/c58f4bf0a1d62c525223fc7fd36b07b90d9c8ce0))
+* Introduce `get_agent_tool_schemas` for normalized tool schema extraction, enforce pydantic-ai adapter boundaries, and pin pydantic-ai dependencies to `1.49.0`. ([59674c4](https://github.com/renext-ai/chainlite/commit/59674c4c0101f791162af420141b773a6649a96f))
+* Refactor token usage ablation study to track summarizer stats, rename compaction strategies, and introduce new utility modules. ([5bbee27](https://github.com/renext-ai/chainlite/commit/5bbee277781aef6a853884980fdac9f72114ca8d))
+
+
+### Bug Fixes
+
+* Corrected "summarizor" spelling to "summarizer" across classes, configurations, and documentation, adding backward compatibility for legacy keys. ([129edad](https://github.com/renext-ai/chainlite/commit/129edad6759176c5b1abb091472ea1c0d6228cbb))
+
 ## [0.4.1](https://github.com/renext-ai/chainlite/compare/chainlite-v0.4.0...chainlite-v0.4.1) (2026-02-12)
 
 
