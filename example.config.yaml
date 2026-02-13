@@ -69,6 +69,17 @@ llm_model_name: "openai:gpt-4"
 #   # For "custom" mode:
 #   # summarizor_config_path: "path/to/summarizer.yaml"
 #   # summarizor_config_dict: {}
+#
+#   # (Optional) In-run lazy summarization.
+#   # When enabled, during a single agent.run() with multiple tool calls,
+#   # previous tool results are summarized before the next LLM request.
+#   # This controls context window usage within a run.
+#   # Has its own independent mode, separate from post-run truncation.
+#   # lazy_summarization:
+#   #   mode: "simple"              # "simple" | "auto" | "custom" — independent from post-run mode
+#   #   truncation_threshold: 3000  # optional, falls back to parent truncation_threshold
+#   #   start_iter: 2               # start after Nth tool iteration within a run (default: 2)
+#   #   start_run: 1                # activate after Nth agent.run() call (default: 1)
 
 # --------------------------------------------------------------------------
 # Provider-Specific Settings

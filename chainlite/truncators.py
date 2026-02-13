@@ -12,6 +12,8 @@ if TYPE_CHECKING:
 class BaseHistoryTruncator:
     """Base class for history truncation strategies."""
 
+    threshold: int = 5000
+
     async def atruncate(
         self, messages: List[ModelMessage], context: Optional[str] = None
     ) -> List[ModelMessage]:
@@ -23,6 +25,18 @@ class BaseHistoryTruncator:
     ) -> List[ModelMessage]:
         """Synchronously truncate messages."""
         return messages
+
+    async def atruncate_part(
+        self, part: ToolReturnPart, context: Optional[str] = None
+    ) -> ToolReturnPart:
+        """Asynchronously truncate a single ToolReturnPart."""
+        return part
+
+    def truncate_part(
+        self, part: ToolReturnPart, context: Optional[str] = None
+    ) -> ToolReturnPart:
+        """Synchronously truncate a single ToolReturnPart."""
+        return part
 
 
 class SimpleTruncator(BaseHistoryTruncator):
@@ -58,6 +72,12 @@ class SimpleTruncator(BaseHistoryTruncator):
             else:
                 new_messages.append(msg)
         return new_messages
+
+    def truncate_part(self, part, context=None):
+        return self._truncate_part(part)
+
+    async def atruncate_part(self, part, context=None):
+        return self._truncate_part(part)
 
     def truncate(self, messages, context=None):
         return self._process_messages(messages)
@@ -121,6 +141,12 @@ class AutoSummarizor(BaseHistoryTruncator):
                 timestamp=part.timestamp,
             )
         return part
+
+    async def atruncate_part(self, part, context=None):
+        return await self._summarize_part_async(part, context)
+
+    def truncate_part(self, part, context=None):
+        return self._summarize_part_sync(part, context)
 
     async def atruncate(self, messages, context=None):
         new_messages = []
@@ -214,6 +240,12 @@ class ChainLiteSummarizor(BaseHistoryTruncator):
                 timestamp=part.timestamp,
             )
         return part
+
+    async def atruncate_part(self, part, context=None):
+        return await self._summarize_part_async(part, context)
+
+    def truncate_part(self, part, context=None):
+        return self._summarize_part_sync(part, context)
 
     async def atruncate(self, messages, context=None):
         new_messages = []

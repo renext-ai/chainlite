@@ -53,6 +53,10 @@ class ChainLite:
         self.output_model: Optional[type[BaseModel]] = None
         self.history_manager: Optional[HistoryManager] = None
         self.exception_retry = 0
+        self._truncator = None
+        self._lazy_config = None
+        self._lazy_truncator = None
+        self._run_count = 0
 
         self.setup_chain()
 
@@ -111,6 +115,40 @@ class ChainLite:
                 truncator = ChainLiteSummarizor(
                     config_or_path=path or dict_cfg, threshold=threshold
                 )
+
+            # Lazy Summarization Setup (independent in-run truncator)
+            lazy_cfg = t_config.get("lazy_summarization")
+            if lazy_cfg and lazy_cfg.get("mode"):
+                lazy_mode = lazy_cfg["mode"]
+                lazy_threshold = lazy_cfg.get("truncation_threshold", threshold)
+                self._lazy_config = {
+                    "start_iter": lazy_cfg.get("start_iter", 2),
+                    "start_run": lazy_cfg.get("start_run", 1),
+                }
+                if lazy_mode == "simple":
+                    self._lazy_truncator = SimpleTruncator(threshold=lazy_threshold)
+                elif lazy_mode == "auto":
+                    self._lazy_truncator = AutoSummarizor(
+                        threshold=lazy_threshold,
+                        model_name=self.config.llm_model_name,
+                    )
+                elif lazy_mode == "custom":
+                    lazy_path = lazy_cfg.get("summarizor_config_path")
+                    lazy_dict = lazy_cfg.get("summarizor_config_dict")
+                    if not lazy_path and not lazy_dict:
+                        raise ValueError(
+                            "Must specify either 'summarizor_config_path' or 'summarizor_config_dict' for custom lazy truncator"
+                        )
+                    self._lazy_truncator = ChainLiteSummarizor(
+                        config_or_path=lazy_path or lazy_dict,
+                        threshold=lazy_threshold,
+                    )
+                logger.info(
+                    f"Lazy summarization enabled: mode={lazy_mode}, threshold={lazy_threshold}, "
+                    f"start_iter={self._lazy_config['start_iter']}, start_run={self._lazy_config['start_run']}"
+                )
+
+        self._truncator = truncator
 
         if self.config.use_history:
             logger.info(
@@ -389,6 +427,86 @@ class ChainLite:
 
         return self.agent
 
+    def _should_use_lazy_summarization(self) -> bool:
+        """Check if lazy summarization should be used for the current run."""
+        return (
+            self._lazy_config is not None
+            and self._lazy_truncator is not None
+            and self._run_count >= self._lazy_config["start_run"]
+        )
+
+    async def _arun_with_lazy_summarization(
+        self, agent, prompt, message_history, model_settings, deps, context
+    ):
+        """Run agent with iter-based lazy summarization of previous tool results."""
+        from pydantic_ai.agent import CallToolsNode
+        from pydantic_ai.messages import ModelRequest, ToolReturnPart
+        from pydantic_graph import End
+
+        tool_iter_count = 0
+
+        async with agent.iter(
+            prompt,
+            message_history=message_history,
+            model_settings=model_settings,
+            deps=deps,
+        ) as agent_run:
+            node = agent_run.next_node
+            while not isinstance(node, End):
+                if isinstance(node, CallToolsNode):
+                    tool_iter_count += 1
+                    if tool_iter_count >= self._lazy_config["start_iter"]:
+                        await self._alazy_summarize_previous_tool_results(
+                            agent_run.all_messages(), context
+                        )
+                node = await agent_run.next(node)
+
+        return agent_run.result
+
+    async def _alazy_summarize_previous_tool_results(
+        self, messages: list, context: str
+    ) -> None:
+        """In-place summarize older ToolReturnParts, preserving the most recent ones."""
+        from pydantic_ai.messages import ModelRequest, ToolReturnPart
+
+        if not self._lazy_truncator:
+            return
+
+        # Find the last ModelRequest that contains ToolReturnPart (= current tool results)
+        last_tool_msg_idx = -1
+        for i in range(len(messages) - 1, -1, -1):
+            if isinstance(messages[i], ModelRequest):
+                if any(isinstance(p, ToolReturnPart) for p in messages[i].parts):
+                    last_tool_msg_idx = i
+                    break
+
+        if last_tool_msg_idx < 0:
+            return
+
+        # Process all earlier messages (not the most recent tool results)
+        for i, msg in enumerate(messages):
+            if i >= last_tool_msg_idx:
+                break
+            if not isinstance(msg, ModelRequest):
+                continue
+            new_parts = []
+            changed = False
+            for part in msg.parts:
+                if (
+                    isinstance(part, ToolReturnPart)
+                    and isinstance(part.content, str)
+                    and len(part.content) > self._lazy_truncator.threshold
+                ):
+                    processed = await self._lazy_truncator.atruncate_part(
+                        part, context
+                    )
+                    new_parts.append(processed)
+                    changed = True
+                else:
+                    new_parts.append(part)
+            if changed:
+                msg.parts = new_parts
+
     def run(self, input_data: dict, deps: Any = None) -> Union[str, Dict[str, Any]]:
         """
         Executes the synchronous chat flow.
@@ -404,20 +522,28 @@ class ChainLite:
 
         # Get agent (potentially dynamic)
         agent = asyncio.run(self._get_agent_for_run(input_data))
+        self._run_count += 1
+        input_str = input_data.get("input") or str(prompt)
 
         max_retries = self.config.max_retries or 3
         current_try = 0
 
         while True:
             try:
-                result = agent.run_sync(
-                    prompt,
-                    message_history=message_history,
-                    model_settings=self._model_settings,
-                    deps=deps,
-                )
-                # Capture the prompt string for context-aware truncation
-                input_str = input_data.get("input") or str(prompt)
+                if self._should_use_lazy_summarization():
+                    result = asyncio.run(
+                        self._arun_with_lazy_summarization(
+                            agent, prompt, message_history,
+                            self._model_settings, deps, input_str,
+                        )
+                    )
+                else:
+                    result = agent.run_sync(
+                        prompt,
+                        message_history=message_history,
+                        model_settings=self._model_settings,
+                        deps=deps,
+                    )
                 return self._process_run_result(result, context=input_str)
 
             except Exception as e:
@@ -447,19 +573,26 @@ class ChainLite:
 
         # Get agent (potentially dynamic)
         agent = await self._get_agent_for_run(input_data)
+        self._run_count += 1
+        input_str = input_data.get("input") or str(prompt)
 
         max_retries = self.config.max_retries or 3
         current_try = 0
 
         while True:
             try:
-                result = await agent.run(
-                    prompt,
-                    message_history=message_history,
-                    model_settings=self._model_settings,
-                    deps=deps,
-                )
-                input_str = input_data.get("input") or str(prompt)
+                if self._should_use_lazy_summarization():
+                    result = await self._arun_with_lazy_summarization(
+                        agent, prompt, message_history,
+                        self._model_settings, deps, input_str,
+                    )
+                else:
+                    result = await agent.run(
+                        prompt,
+                        message_history=message_history,
+                        model_settings=self._model_settings,
+                        deps=deps,
+                    )
                 return await self._aprocess_run_result(result, context=input_str)
 
             except Exception as e:
