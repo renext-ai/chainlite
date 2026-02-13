@@ -453,6 +453,7 @@ class ChainLite:
 
         # Get agent (potentially dynamic)
         agent = asyncio.run(self._get_agent_for_run(input_data))
+        self._run_count += 1
 
         result = agent.run_stream_sync(
             prompt,
@@ -485,8 +486,10 @@ class ChainLite:
 
         # Update history after stream completes
         if self.history_manager:
+            input_str = input_data.get("input") or str(prompt)
             self.history_manager.add_messages(
                 result.new_messages(),
+                context=input_str,
                 apply_truncation=self._should_apply_post_run_compaction(),
             )
 
@@ -499,6 +502,7 @@ class ChainLite:
         """
         prompt, message_history = await self._prepare_run(input_data)
         agent = await self._get_agent_for_run(input_data)
+        self._run_count += 1
 
         async with agent.run_stream(
             prompt,
