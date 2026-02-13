@@ -100,3 +100,6 @@ chainlite/_version.py
 
 history_integration_test_session_raw_*.md
 history_integration_test_session_truncated_*.md
+
+
+experiments/results

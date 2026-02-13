@@ -62,7 +62,7 @@ def make_long_content(step: int) -> str:
     return f"STEP_{step}_START " + ("x" * 200) + f" STEP_{step}_END"
 
 
-async def test_lazy_summarization_basic():
+async def test_in_run_compaction_basic():
     """Test that lazy summarization truncates previous tool results during a run."""
     print("\n--- Test: Lazy Summarization Basic ---")
 
@@ -71,13 +71,15 @@ async def test_lazy_summarization_basic():
         use_history=True,
         session_id="test_lazy_basic",
         history_truncator_config={
-            "mode": "simple",
-            "truncation_threshold": 5000,
-            "lazy_summarization": {
+            "post_run_compaction": {
+                "mode": "simple",
+                "truncation_threshold": 5000,
+            },
+            "in_run_compaction": {
                 "mode": "simple",
                 "truncation_threshold": 50,
-                "start_iter": 2,
-                "start_run": 1,
+                "lazy_start_iter": 2,
+                "lazy_start_run": 1,
             },
         },
     )
@@ -148,13 +150,15 @@ async def test_lazy_start_run_delay():
         use_history=True,
         session_id="test_lazy_delay",
         history_truncator_config={
-            "mode": "simple",
-            "truncation_threshold": 5000,
-            "lazy_summarization": {
+            "post_run_compaction": {
+                "mode": "simple",
+                "truncation_threshold": 5000,
+            },
+            "in_run_compaction": {
                 "mode": "simple",
                 "truncation_threshold": 50,
-                "start_iter": 2,
-                "start_run": 3,  # Only activate on 3rd run
+                "lazy_start_iter": 2,
+                "lazy_start_run": 3,  # Only activate on 3rd run
             },
         },
     )
@@ -230,13 +234,15 @@ async def test_lazy_start_iter_delay():
         use_history=True,
         session_id="test_lazy_iter",
         history_truncator_config={
-            "mode": "simple",
-            "truncation_threshold": 5000,
-            "lazy_summarization": {
+            "post_run_compaction": {
+                "mode": "simple",
+                "truncation_threshold": 5000,
+            },
+            "in_run_compaction": {
                 "mode": "simple",
                 "truncation_threshold": 50,
-                "start_iter": 3,  # Only start at 3rd tool iteration
-                "start_run": 1,
+                "lazy_start_iter": 3,  # Only start at 3rd tool iteration
+                "lazy_start_run": 1,
             },
         },
     )
@@ -283,7 +289,7 @@ if __name__ == "__main__":
     if not os.getenv("OPENAI_API_KEY"):
         os.environ["OPENAI_API_KEY"] = "dummy"
 
-    asyncio.run(test_lazy_summarization_basic())
+    asyncio.run(test_in_run_compaction_basic())
     asyncio.run(test_lazy_start_run_delay())
     asyncio.run(test_lazy_start_iter_delay())
     print("\n=== All lazy summarization tests passed ===")

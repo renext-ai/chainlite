@@ -54,6 +54,10 @@ class ChainLite:
         self.history_manager: Optional[HistoryManager] = None
         self.exception_retry = 0
         self._truncator = None
+        self._post_run_compaction_start_run = 1
+        self._in_run_compaction_config = None
+        self._in_run_compactor = None
+        # Backward-compatible aliases for older integrations.
         self._lazy_config = None
         self._lazy_truncator = None
         self._run_count = 0
@@ -92,61 +96,63 @@ class ChainLite:
             from .truncators import SimpleTruncator, AutoSummarizor, ChainLiteSummarizor
 
             t_config = self.config.history_truncator_config
-            mode = t_config.get("mode")
-            threshold = t_config.get("truncation_threshold", 5000)
+            post_cfg = t_config.post_run_compaction
+            threshold = 5000
+            if post_cfg and post_cfg.mode:
+                mode = post_cfg.mode
+                threshold = post_cfg.truncation_threshold
+                self._post_run_compaction_start_run = post_cfg.start_run
 
-            if mode == "simple":
-                truncator = SimpleTruncator(threshold=threshold)
-            elif mode == "auto":
-                truncator = AutoSummarizor(
-                    threshold=threshold, model_name=self.config.llm_model_name
-                )
-            elif mode == "custom":
-                path = t_config.get("summarizor_config_path")
-                dict_cfg = t_config.get("summarizor_config_dict")
-                if path and dict_cfg:
-                    raise ValueError(
-                        "Cannot specify both 'summarizor_config_path' and 'summarizor_config_dict'"
+                if mode == "simple":
+                    truncator = SimpleTruncator(threshold=threshold)
+                elif mode == "auto":
+                    truncator = AutoSummarizor(
+                        threshold=threshold, model_name=self.config.llm_model_name
                     )
-                if not path and not dict_cfg:
-                    raise ValueError(
-                        "Must specify either 'summarizor_config_path' or 'summarizor_config_dict' for custom truncator"
+                elif mode == "custom":
+                    truncator = ChainLiteSummarizor(
+                        config_or_path=(
+                            post_cfg.summarizor_config_path
+                            or post_cfg.summarizor_config_dict
+                        ),
+                        threshold=threshold,
                     )
-                truncator = ChainLiteSummarizor(
-                    config_or_path=path or dict_cfg, threshold=threshold
-                )
 
-            # Lazy Summarization Setup (independent in-run truncator)
-            lazy_cfg = t_config.get("lazy_summarization")
-            if lazy_cfg and lazy_cfg.get("mode"):
-                lazy_mode = lazy_cfg["mode"]
-                lazy_threshold = lazy_cfg.get("truncation_threshold", threshold)
-                self._lazy_config = {
-                    "start_iter": lazy_cfg.get("start_iter", 2),
-                    "start_run": lazy_cfg.get("start_run", 1),
+            # In-run compaction setup (independent from post-run compaction)
+            in_run_cfg = t_config.in_run_compaction
+            if in_run_cfg and in_run_cfg.mode:
+                in_run_mode = in_run_cfg.mode
+                in_run_threshold = in_run_cfg.truncation_threshold or threshold
+                self._in_run_compaction_config = {
+                    "lazy_start_iter": in_run_cfg.lazy_start_iter,
+                    "lazy_start_run": in_run_cfg.lazy_start_run,
+                    "max_concurrency": in_run_cfg.max_concurrency,
                 }
-                if lazy_mode == "simple":
-                    self._lazy_truncator = SimpleTruncator(threshold=lazy_threshold)
-                elif lazy_mode == "auto":
-                    self._lazy_truncator = AutoSummarizor(
-                        threshold=lazy_threshold,
+                if in_run_mode == "simple":
+                    self._in_run_compactor = SimpleTruncator(threshold=in_run_threshold)
+                elif in_run_mode == "auto":
+                    self._in_run_compactor = AutoSummarizor(
+                        threshold=in_run_threshold,
                         model_name=self.config.llm_model_name,
                     )
-                elif lazy_mode == "custom":
-                    lazy_path = lazy_cfg.get("summarizor_config_path")
-                    lazy_dict = lazy_cfg.get("summarizor_config_dict")
-                    if not lazy_path and not lazy_dict:
-                        raise ValueError(
-                            "Must specify either 'summarizor_config_path' or 'summarizor_config_dict' for custom lazy truncator"
-                        )
-                    self._lazy_truncator = ChainLiteSummarizor(
-                        config_or_path=lazy_path or lazy_dict,
-                        threshold=lazy_threshold,
+                elif in_run_mode == "custom":
+                    self._in_run_compactor = ChainLiteSummarizor(
+                        config_or_path=(
+                            in_run_cfg.summarizor_config_path
+                            or in_run_cfg.summarizor_config_dict
+                        ),
+                        threshold=in_run_threshold,
                     )
                 logger.info(
-                    f"Lazy summarization enabled: mode={lazy_mode}, threshold={lazy_threshold}, "
-                    f"start_iter={self._lazy_config['start_iter']}, start_run={self._lazy_config['start_run']}"
+                    f"In-run compaction enabled: mode={in_run_mode}, threshold={in_run_threshold}, "
+                    f"lazy_start_iter={self._in_run_compaction_config['lazy_start_iter']}, "
+                    f"lazy_start_run={self._in_run_compaction_config['lazy_start_run']}, "
+                    f"max_concurrency={self._in_run_compaction_config['max_concurrency']}"
                 )
+
+            # Keep legacy internal names synchronized for compatibility.
+            self._lazy_config = self._in_run_compaction_config
+            self._lazy_truncator = self._in_run_compactor
 
         self._truncator = truncator
 
@@ -334,28 +340,6 @@ class ChainLite:
 
         return prompt_str
 
-    def _get_message_history(self) -> Optional[List[ModelMessage]]:
-        """Get message history if enabled."""
-        if self.history_manager:
-            return (
-                self.history_manager.messages if self.history_manager.messages else None
-            )
-        return None
-
-    def _update_history(
-        self, new_messages: List[ModelMessage], context: Optional[str] = None
-    ) -> None:
-        """Update message history with new messages."""
-        if self.history_manager:
-            self.history_manager.add_messages(new_messages, context=context)
-
-    async def _aupdate_history(
-        self, new_messages: List[ModelMessage], context: Optional[str] = None
-    ) -> None:
-        """Update message history asynchronously."""
-        if self.history_manager:
-            await self.history_manager.add_messages_async(new_messages, context=context)
-
     async def _prepare_run(self, input_data: dict) -> tuple[
         Union[str, list[Union[str, BinaryContent, ImageUrl]]],
         Optional[List[ModelMessage]],
@@ -371,7 +355,10 @@ class ChainLite:
             self.history_manager.system_prompt = self._get_full_system_prompt()
 
         prompt = await self._build_prompt(input_data)
-        message_history = self._get_message_history()
+        if self.history_manager and self.history_manager.messages:
+            message_history = self.history_manager.messages
+        else:
+            message_history = None
         return prompt, message_history
 
     def _process_run_result(
@@ -379,7 +366,11 @@ class ChainLite:
     ) -> Union[str, Dict[str, Any]]:
         """Process agent run result: update history and dump output."""
         if self.history_manager:
-            self._update_history(result.new_messages(), context=context)
+            self.history_manager.add_messages(
+                result.new_messages(),
+                context=context,
+                apply_truncation=self._should_apply_post_run_compaction(),
+            )
 
         output = result.output
         if isinstance(output, BaseModel):
@@ -391,7 +382,11 @@ class ChainLite:
     ) -> Union[str, Dict[str, Any]]:
         """Process agent run result asynchronously."""
         if self.history_manager:
-            await self._aupdate_history(result.new_messages(), context=context)
+            await self.history_manager.add_messages_async(
+                result.new_messages(),
+                context=context,
+                apply_truncation=self._should_apply_post_run_compaction(),
+            )
 
         output = result.output
         if isinstance(output, BaseModel):
@@ -427,23 +422,47 @@ class ChainLite:
 
         return self.agent
 
-    def _should_use_lazy_summarization(self) -> bool:
-        """Check if lazy summarization should be used for the current run."""
+    def _should_apply_post_run_compaction(self) -> bool:
+        """Check if post-run compaction should be applied for this run."""
+        return self._run_count >= self._post_run_compaction_start_run
+
+    def _should_use_in_run_compaction(self) -> bool:
+        """Check if in-run compaction should be used for the current run."""
         return (
-            self._lazy_config is not None
-            and self._lazy_truncator is not None
-            and self._run_count >= self._lazy_config["start_run"]
+            self.history_manager is not None
+            and self._in_run_compaction_config is not None
+            and self._in_run_compactor is not None
+            and self._run_count >= self._in_run_compaction_config["lazy_start_run"]
         )
 
-    async def _arun_with_lazy_summarization(
+    async def _arun_with_in_run_compaction(
         self, agent, prompt, message_history, model_settings, deps, context
     ):
-        """Run agent with iter-based lazy summarization of previous tool results."""
+        """Run agent with in-run compaction of previous tool results."""
         from pydantic_ai.agent import CallToolsNode
-        from pydantic_ai.messages import ModelRequest, ToolReturnPart
         from pydantic_graph import End
 
         tool_iter_count = 0
+        in_run_task: Optional[asyncio.Task] = None
+        in_run_refresh_requested = False
+
+        def _schedule_in_run_if_needed(messages: list) -> None:
+            nonlocal in_run_task, in_run_refresh_requested
+            if in_run_task is None or in_run_task.done():
+                in_run_task = asyncio.create_task(
+                    self.history_manager.apply_in_run_compaction_to_previous_tool_results(
+                        messages,
+                        compactor=self._in_run_compactor,
+                        context=context,
+                        max_concurrency=self._in_run_compaction_config.get(
+                            "max_concurrency", 4
+                        ),
+                    )
+                )
+                in_run_refresh_requested = False
+            else:
+                # Coalesce repeated triggers while one in-run task is in flight.
+                in_run_refresh_requested = True
 
         async with agent.iter(
             prompt,
@@ -455,57 +474,37 @@ class ChainLite:
             while not isinstance(node, End):
                 if isinstance(node, CallToolsNode):
                     tool_iter_count += 1
-                    if tool_iter_count >= self._lazy_config["start_iter"]:
-                        await self._alazy_summarize_previous_tool_results(
-                            agent_run.all_messages(), context
-                        )
+                    if (
+                        tool_iter_count
+                        >= self._in_run_compaction_config["lazy_start_iter"]
+                    ):
+                        _schedule_in_run_if_needed(agent_run.all_messages())
                 node = await agent_run.next(node)
 
-        return agent_run.result
-
-    async def _alazy_summarize_previous_tool_results(
-        self, messages: list, context: str
-    ) -> None:
-        """In-place summarize older ToolReturnParts, preserving the most recent ones."""
-        from pydantic_ai.messages import ModelRequest, ToolReturnPart
-
-        if not self._lazy_truncator:
-            return
-
-        # Find the last ModelRequest that contains ToolReturnPart (= current tool results)
-        last_tool_msg_idx = -1
-        for i in range(len(messages) - 1, -1, -1):
-            if isinstance(messages[i], ModelRequest):
-                if any(isinstance(p, ToolReturnPart) for p in messages[i].parts):
-                    last_tool_msg_idx = i
-                    break
-
-        if last_tool_msg_idx < 0:
-            return
-
-        # Process all earlier messages (not the most recent tool results)
-        for i, msg in enumerate(messages):
-            if i >= last_tool_msg_idx:
-                break
-            if not isinstance(msg, ModelRequest):
-                continue
-            new_parts = []
-            changed = False
-            for part in msg.parts:
+                # If a pending refresh was requested while the previous task
+                # was running, immediately schedule another pass when it completes.
                 if (
-                    isinstance(part, ToolReturnPart)
-                    and isinstance(part.content, str)
-                    and len(part.content) > self._lazy_truncator.threshold
+                    in_run_task is not None
+                    and in_run_task.done()
+                    and in_run_refresh_requested
                 ):
-                    processed = await self._lazy_truncator.atruncate_part(
-                        part, context
-                    )
-                    new_parts.append(processed)
-                    changed = True
-                else:
-                    new_parts.append(part)
-            if changed:
-                msg.parts = new_parts
+                    _schedule_in_run_if_needed(agent_run.all_messages())
+
+            # Final synchronization: ensure outstanding lazy work is applied before
+            # returning result so history persists the latest summarized state.
+            if in_run_task is not None:
+                await in_run_task
+            if in_run_refresh_requested:
+                await self.history_manager.apply_in_run_compaction_to_previous_tool_results(
+                    agent_run.all_messages(),
+                    compactor=self._in_run_compactor,
+                    context=context,
+                    max_concurrency=self._in_run_compaction_config.get(
+                        "max_concurrency", 4
+                    ),
+                )
+
+        return agent_run.result
 
     def run(self, input_data: dict, deps: Any = None) -> Union[str, Dict[str, Any]]:
         """
@@ -530,11 +529,15 @@ class ChainLite:
 
         while True:
             try:
-                if self._should_use_lazy_summarization():
+                if self._should_use_in_run_compaction():
                     result = asyncio.run(
-                        self._arun_with_lazy_summarization(
-                            agent, prompt, message_history,
-                            self._model_settings, deps, input_str,
+                        self._arun_with_in_run_compaction(
+                            agent,
+                            prompt,
+                            message_history,
+                            self._model_settings,
+                            deps,
+                            input_str,
                         )
                     )
                 else:
@@ -581,10 +584,14 @@ class ChainLite:
 
         while True:
             try:
-                if self._should_use_lazy_summarization():
-                    result = await self._arun_with_lazy_summarization(
-                        agent, prompt, message_history,
-                        self._model_settings, deps, input_str,
+                if self._should_use_in_run_compaction():
+                    result = await self._arun_with_in_run_compaction(
+                        agent,
+                        prompt,
+                        message_history,
+                        self._model_settings,
+                        deps,
+                        input_str,
                     )
                 else:
                     result = await agent.run(
@@ -653,7 +660,10 @@ class ChainLite:
 
         # Update history after stream completes
         if self.history_manager:
-            self._update_history(result.new_messages())
+            self.history_manager.add_messages(
+                result.new_messages(),
+                apply_truncation=self._should_apply_post_run_compaction(),
+            )
 
     async def astream(
         self, input_data: dict, deps: Any = None
@@ -700,7 +710,11 @@ class ChainLite:
             # Update history after stream completes
             if self.history_manager:
                 input_str = input_data.get("input") or str(prompt)
-                await self._aupdate_history(result.new_messages(), context=input_str)
+                await self.history_manager.add_messages_async(
+                    result.new_messages(),
+                    context=input_str,
+                    apply_truncation=self._should_apply_post_run_compaction(),
+                )
 
     @property
     def chat_history_messages(self) -> Optional[List[ModelMessage]]:

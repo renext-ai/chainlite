@@ -64,22 +64,26 @@ llm_model_name: "openai:gpt-4"
 
 # (Optional) The strategy to use for truncating long tool results in history.
 # history_truncator_config:
-#   mode: "simple"  # simple, auto, custom
-#   truncation_threshold: 5000
-#   # For "custom" mode:
-#   # summarizor_config_path: "path/to/summarizer.yaml"
-#   # summarizor_config_dict: {}
+#   # Post-run compaction (applied when each run finishes)
+#   post_run_compaction:
+#     mode: "simple"                  # "simple" | "auto" | "custom"
+#     truncation_threshold: 5000
+#     start_run: 1                    # begin post-run compaction from Nth run
+#     # For "custom" mode:
+#     # summarizor_config_path: "path/to/summarizer.yaml"
+#     # summarizor_config_dict: {}
 #
-#   # (Optional) In-run lazy summarization.
+#   # (Optional) In-run compaction.
 #   # When enabled, during a single agent.run() with multiple tool calls,
-#   # previous tool results are summarized before the next LLM request.
+#   # previous tool results are compacted before the next LLM request.
 #   # This controls context window usage within a run.
 #   # Has its own independent mode, separate from post-run truncation.
-#   # lazy_summarization:
+#   # in_run_compaction:
 #   #   mode: "simple"              # "simple" | "auto" | "custom" — independent from post-run mode
-#   #   truncation_threshold: 3000  # optional, falls back to parent truncation_threshold
-#   #   start_iter: 2               # start after Nth tool iteration within a run (default: 2)
-#   #   start_run: 1                # activate after Nth agent.run() call (default: 1)
+#   #   truncation_threshold: 3000  # optional, falls back to post_run_compaction.truncation_threshold
+#   #   lazy_start_iter: 2          # start after Nth tool iteration within a run (default: 2)
+#   #   lazy_start_run: 1           # activate in-run compaction after Nth agent.run() call (default: 1)
+#   #   max_concurrency: 4          # max parallel lazy summarize jobs per pass (default: 4)
 
 # --------------------------------------------------------------------------
 # Provider-Specific Settings
