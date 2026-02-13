@@ -45,8 +45,8 @@ class PostRunCompactionConfig(_BaseCompactionConfig):
 class InRunCompactionConfig(_BaseCompactionConfig):
     """In-run compaction configuration."""
 
-    lazy_start_iter: int = 2
-    lazy_start_run: int = 1
+    start_iter: int = 2
+    start_run: int = 1
     max_concurrency: int = 4
 
     @model_validator(mode="before")
@@ -55,18 +55,18 @@ class InRunCompactionConfig(_BaseCompactionConfig):
         if not isinstance(data, dict):
             return data
         normalized = dict(data)
-        if "lazy_start_iter" not in normalized and "start_iter" in normalized:
-            normalized["lazy_start_iter"] = normalized["start_iter"]
-        if "lazy_start_run" not in normalized and "start_run" in normalized:
-            normalized["lazy_start_run"] = normalized["start_run"]
-        normalized.pop("start_iter", None)
-        normalized.pop("start_run", None)
+        if "start_iter" not in normalized and "lazy_start_iter" in normalized:
+            normalized["start_iter"] = normalized["lazy_start_iter"]
+        if "start_run" not in normalized and "lazy_start_run" in normalized:
+            normalized["start_run"] = normalized["lazy_start_run"]
+        normalized.pop("lazy_start_iter", None)
+        normalized.pop("lazy_start_run", None)
         return normalized
 
     @model_validator(mode="after")
     def _normalize_values(self):
-        self.lazy_start_iter = max(1, int(self.lazy_start_iter))
-        self.lazy_start_run = max(1, int(self.lazy_start_run))
+        self.start_iter = max(1, int(self.start_iter))
+        self.start_run = max(1, int(self.start_run))
         self.max_concurrency = max(1, int(self.max_concurrency))
         return self
 

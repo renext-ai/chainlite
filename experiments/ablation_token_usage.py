@@ -2,13 +2,14 @@
 Ablation study: compare token consumption across truncation strategies.
 
 Strategies:
-  1. no_truncation    — no history truncation at all
-  2. post_run_compaction — post-run summarization/truncation after each run
-  3. in_run_compaction  — in-run compaction (compress N-1 while N executes)
+  1. no_truncation                — no history truncation at all
+  2. post_run_compaction          — post-run summarization/truncation after each run
+  3. post_and_in_run_compaction   — post-run + in-run compaction (compress N-1 while N executes)
 
 Uses real LLM calls via OPENAI_API_KEY from .env.
 Generates charts in a per-run output directory.
 """
+
 import os
 import sys
 import asyncio
@@ -28,17 +29,17 @@ from chainlite.usage_tracker import UsageTracker
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-DEFAULT_NUM_RUNS = 5
+DEFAULT_NUM_RUNS = 3
 DEFAULT_TOOL_OUTPUT_SIZE = 2000  # chars per tool output
 DEFAULT_MODEL = "openai:gpt-4o-mini"
 DEFAULT_RESULTS_ROOT = Path(__file__).parent / "results"
 DEFAULT_POST_THRESHOLD = 500
 DEFAULT_POST_START_RUN = 1
-DEFAULT_LAZY_THRESHOLD = 5000
-DEFAULT_LAZY_SUMM_THRESHOLD = 500
-DEFAULT_LAZY_START_ITER = 2
-DEFAULT_LAZY_START_RUN = 1
-DEFAULT_LAZY_MAX_CONCURRENCY = 4
+DEFAULT_POST_RUN_THRESHOLD = 5000
+DEFAULT_IN_RUN_THRESHOLD = 500
+DEFAULT_IN_RUN_START_ITER = 2
+DEFAULT_IN_RUN_START_RUN = 1
+DEFAULT_IN_RUN_MAX_CONCURRENCY = 4
 DEFAULT_TOOL_CALLS_PER_RUN = 1
 DEFAULT_MAX_CONTEXT_TOKENS = 128000
 DEFAULT_CONTEXT_SAFETY_MARGIN = 0.8
@@ -312,23 +313,23 @@ def build_configs(args: argparse.Namespace) -> dict[str, dict]:
                 },
             },
         },
-        "in_run_compaction_auto": {
+        "post_and_in_run_compaction_auto": {
             "llm_model_name": args.model,
             "system_prompt": system_prompt,
             "use_history": True,
-            "session_id": "ablation_in_run_auto",
+            "session_id": "ablation_post_and_in_run_auto",
             "history_truncator_config": {
                 "post_run_compaction": {
                     "mode": "auto",
-                    "truncation_threshold": args.lazy_threshold,
+                    "truncation_threshold": args.post_run_threshold,
                     "start_run": args.post_start_run,
                 },
                 "in_run_compaction": {
                     "mode": "auto",
-                    "truncation_threshold": args.lazy_summ_threshold,
-                    "lazy_start_iter": args.lazy_start_iter,
-                    "lazy_start_run": args.lazy_start_run,
-                    "max_concurrency": args.lazy_max_concurrency,
+                    "truncation_threshold": args.in_run_threshold,
+                    "start_iter": args.in_run_start_iter,
+                    "start_run": args.in_run_start_run,
+                    "max_concurrency": args.in_run_max_concurrency,
                 },
             },
         },
@@ -363,19 +364,21 @@ def parse_args() -> argparse.Namespace:
         description="Ablation study for token usage across truncation strategies."
     )
     parser.add_argument("--num-runs", type=int, default=DEFAULT_NUM_RUNS)
-    parser.add_argument("--tool-output-size", type=int, default=DEFAULT_TOOL_OUTPUT_SIZE)
+    parser.add_argument(
+        "--tool-output-size", type=int, default=DEFAULT_TOOL_OUTPUT_SIZE
+    )
     parser.add_argument("--model", type=str, default=DEFAULT_MODEL)
     parser.add_argument("--results-root", type=Path, default=DEFAULT_RESULTS_ROOT)
     parser.add_argument("--post-threshold", type=int, default=DEFAULT_POST_THRESHOLD)
     parser.add_argument("--post-start-run", type=int, default=DEFAULT_POST_START_RUN)
-    parser.add_argument("--lazy-threshold", type=int, default=DEFAULT_LAZY_THRESHOLD)
+    parser.add_argument("--post-run-threshold", type=int, default=DEFAULT_POST_RUN_THRESHOLD)
     parser.add_argument(
-        "--lazy-summ-threshold", type=int, default=DEFAULT_LAZY_SUMM_THRESHOLD
+        "--in-run-threshold", type=int, default=DEFAULT_IN_RUN_THRESHOLD
     )
-    parser.add_argument("--lazy-start-iter", type=int, default=DEFAULT_LAZY_START_ITER)
-    parser.add_argument("--lazy-start-run", type=int, default=DEFAULT_LAZY_START_RUN)
+    parser.add_argument("--in-run-start-iter", type=int, default=DEFAULT_IN_RUN_START_ITER)
+    parser.add_argument("--in-run-start-run", type=int, default=DEFAULT_IN_RUN_START_RUN)
     parser.add_argument(
-        "--lazy-max-concurrency", type=int, default=DEFAULT_LAZY_MAX_CONCURRENCY
+        "--in-run-max-concurrency", type=int, default=DEFAULT_IN_RUN_MAX_CONCURRENCY
     )
     parser.add_argument(
         "--tool-calls-per-run", type=int, default=DEFAULT_TOOL_CALLS_PER_RUN
@@ -406,7 +409,7 @@ async def run_experiment(
     tool_calls_per_run: int,
     fake_db_results: dict[str, str],
     tool_output_size: int,
-) -> "ChainLite":
+) -> tuple["ChainLite", dict[int, dict[str, int]]]:
     """Run NUM_RUNS turns with a given config and collect token usage."""
     print(f"\n{'='*60}")
     print(f"  Strategy: {config_name}")
@@ -422,6 +425,8 @@ async def run_experiment(
         return get_search_result(query, fake_db_results, tool_output_size)
 
     prev_msg_count = 0
+    prev_summarizer_stats = {"input_tokens": 0, "output_tokens": 0, "calls": 0}
+    summarizer_by_run: dict[int, dict[str, int]] = {}
 
     for run_idx in range(1, num_runs + 1):
         base_question = questions[(run_idx - 1) % len(questions)]
@@ -450,6 +455,25 @@ async def run_experiment(
         # Track usage from new messages
         tracker.track_run_messages(new_messages, run_index=run_idx)
 
+        # Track summarizer delta for this run (truncator + in-run compactor)
+        current_summarizer_stats = _get_summarizer_stats(chain)
+        summarizer_by_run[run_idx] = {
+            "input_tokens": max(
+                0,
+                current_summarizer_stats["input_tokens"]
+                - prev_summarizer_stats["input_tokens"],
+            ),
+            "output_tokens": max(
+                0,
+                current_summarizer_stats["output_tokens"]
+                - prev_summarizer_stats["output_tokens"],
+            ),
+            "calls": max(
+                0, current_summarizer_stats["calls"] - prev_summarizer_stats["calls"]
+            ),
+        }
+        prev_summarizer_stats = current_summarizer_stats
+
         # Print per-run stats
         run_records = [r for r in tracker.records if r.run_index == run_idx]
         total_input = sum(r.input_tokens for r in run_records)
@@ -459,7 +483,7 @@ async def run_experiment(
             f"calls={len(run_records)}"
         )
 
-    return chain
+    return chain, summarizer_by_run
 
 
 def _get_summarizer_stats(chain: ChainLite) -> dict:
@@ -518,10 +542,11 @@ async def main(args: argparse.Namespace):
 
     trackers: dict[str, UsageTracker] = {}
     chains: dict[str, ChainLite] = {}
+    summarizer_per_run_by_strategy: dict[str, dict[int, dict[str, int]]] = {}
 
     for config_name, config_dict in configs.items():
         tracker = UsageTracker(name=config_name)
-        chain = await run_experiment(
+        chain, summarizer_by_run = await run_experiment(
             config_name=config_name,
             config_dict=config_dict,
             tracker=tracker,
@@ -533,6 +558,7 @@ async def main(args: argparse.Namespace):
         )
         trackers[config_name] = tracker
         chains[config_name] = chain
+        summarizer_per_run_by_strategy[config_name] = summarizer_by_run
 
     params_path = results_dir / "params.json"
     params = {
@@ -544,11 +570,11 @@ async def main(args: argparse.Namespace):
         "output_dir": str(results_dir),
         "post_threshold": args.post_threshold,
         "post_start_run": args.post_start_run,
-        "lazy_threshold": args.lazy_threshold,
-        "lazy_summ_threshold": args.lazy_summ_threshold,
-        "lazy_start_iter": args.lazy_start_iter,
-        "lazy_start_run": args.lazy_start_run,
-        "lazy_max_concurrency": args.lazy_max_concurrency,
+        "post_run_threshold": args.post_run_threshold,
+        "in_run_threshold": args.in_run_threshold,
+        "in_run_start_iter": args.in_run_start_iter,
+        "in_run_start_run": args.in_run_start_run,
+        "in_run_max_concurrency": args.in_run_max_concurrency,
         "tool_calls_per_run": args.tool_calls_per_run,
         "max_context_tokens": args.max_context_tokens,
         "context_safety_margin": args.context_safety_margin,
@@ -564,16 +590,7 @@ async def main(args: argparse.Namespace):
     print("  Generating charts...")
     print(f"{'='*60}")
 
-    # Chart 1: Per-call dot plots for each strategy
-    for name, tracker in trackers.items():
-        path = results_dir / f"per_call_{name}.png"
-        tracker.plot(
-            title=f"Token Usage Per LLM Call - {name}",
-            save_path=str(path),
-        )
-        print(f"  Saved: {_resolve_chart_path(path)}")
-
-    # Chart 2: Cumulative comparison
+    # Chart 1: Cumulative comparison
     path_cumulative = results_dir / "ablation_cumulative.png"
     UsageTracker.plot_comparison(
         trackers,
@@ -582,11 +599,12 @@ async def main(args: argparse.Namespace):
     )
     print(f"  Saved: {_resolve_chart_path(path_cumulative)}")
 
-    # Chart 3: Per-run bar comparison
+    # Chart 2: Per-run stacked bar (strategy segments with input/output shades)
     path_per_run = results_dir / "ablation_per_run.png"
-    UsageTracker.plot_per_run_comparison(
+    UsageTracker.plot_per_run_strategy_calltype_segments(
         trackers,
-        title="Ablation: Input Tokens Per Run",
+        summarizer_per_run=summarizer_per_run_by_strategy,
+        title="Ablation: Per-Run Token Mix (no/post/post+in by tool/final_answer/summarizer)",
         save_path=str(path_per_run),
     )
     print(f"  Saved: {_resolve_chart_path(path_per_run)}")
@@ -607,7 +625,9 @@ async def main(args: argparse.Namespace):
     print(f"\n{'='*60}")
     print("  Summary — Summarizer Overhead (auto mode)")
     print(f"{'='*60}")
-    print(f"  {'Strategy':<25} {'Summ Input':>15} {'Summ Output':>15} {'Summ Calls':>12}")
+    print(
+        f"  {'Strategy':<25} {'Summ Input':>15} {'Summ Output':>15} {'Summ Calls':>12}"
+    )
     print(f"  {'-'*67}")
     for name, chain in chains.items():
         stats = _get_summarizer_stats(chain)

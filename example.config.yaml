@@ -81,9 +81,9 @@ llm_model_name: "openai:gpt-4"
 #   # in_run_compaction:
 #   #   mode: "simple"              # "simple" | "auto" | "custom" — independent from post-run mode
 #   #   truncation_threshold: 3000  # optional, falls back to post_run_compaction.truncation_threshold
-#   #   lazy_start_iter: 2          # start after Nth tool iteration within a run (default: 2)
-#   #   lazy_start_run: 1           # activate in-run compaction after Nth agent.run() call (default: 1)
-#   #   max_concurrency: 4          # max parallel lazy summarize jobs per pass (default: 4)
+#   #   start_iter: 2               # start after Nth tool iteration within a run (default: 2)
+#   #   start_run: 1                # activate in-run compaction after Nth agent.run() call (default: 1)
+#   #   max_concurrency: 4          # max parallel summarize jobs per pass (default: 4)
 
 # --------------------------------------------------------------------------
 # Provider-Specific Settings

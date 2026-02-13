@@ -1,4 +1,4 @@
-"""Tests for in-run lazy summarization feature."""
+"""Tests for in-run compaction feature."""
 import os
 import asyncio
 from typing import Any, List
@@ -63,13 +63,13 @@ def make_long_content(step: int) -> str:
 
 
 async def test_in_run_compaction_basic():
-    """Test that lazy summarization truncates previous tool results during a run."""
-    print("\n--- Test: Lazy Summarization Basic ---")
+    """Test that in-run compaction truncates previous tool results during a run."""
+    print("\n--- Test: In-Run Compaction Basic ---")
 
     config = ChainLiteConfig(
         llm_model_name="openai:gpt-4o-mini",
         use_history=True,
-        session_id="test_lazy_basic",
+        session_id="test_in_run_basic",
         history_truncator_config={
             "post_run_compaction": {
                 "mode": "simple",
@@ -78,8 +78,8 @@ async def test_in_run_compaction_basic():
             "in_run_compaction": {
                 "mode": "simple",
                 "truncation_threshold": 50,
-                "lazy_start_iter": 2,
-                "lazy_start_run": 1,
+                "start_iter": 2,
+                "start_run": 1,
             },
         },
     )
@@ -121,34 +121,34 @@ async def test_in_run_compaction_basic():
         print(f"  Tool return {i}: len={len(content)}, truncated={is_truncated}")
 
     # The first tool result should have been truncated during the run
-    # (lazy summarization kicks in at start_iter=2, so before tool #2 executes,
+    # (in-run compaction kicks in at start_iter=2, so before tool #2 executes,
     # tool #1 result gets truncated)
     assert len(tool_returns) == 3, f"Expected 3 tool returns, got {len(tool_returns)}"
 
-    # Tool #1 and #2 should be truncated (lazy summarized before #2 and #3)
+    # Tool #1 and #2 should be truncated (compacted before #2 and #3)
     assert "... [Truncated due to length]" in tool_returns[0].content, \
         "Tool #1 result should be truncated"
     assert "... [Truncated due to length]" in tool_returns[1].content, \
         "Tool #2 result should be truncated"
 
-    # Tool #3 (last) should NOT be truncated by lazy summarization
+    # Tool #3 (last) should NOT be truncated by in-run compaction
     # (no subsequent tool call to trigger it)
     # But it may be truncated by post-run truncation if threshold is low enough
     # Since post-run threshold is 5000 and content is ~220 chars, it should be preserved
     assert "STEP_3_END" in tool_returns[2].content, \
         "Tool #3 result should still contain original content"
 
-    print("PASS: Lazy summarization basic test")
+    print("PASS: In-run compaction basic test")
 
 
-async def test_lazy_start_run_delay():
-    """Test that lazy summarization only activates after start_run threshold."""
-    print("\n--- Test: Lazy Start Run Delay ---")
+async def test_in_run_start_run_delay():
+    """Test that in-run compaction only activates after start_run threshold."""
+    print("\n--- Test: In-Run Start Run Delay ---")
 
     config = ChainLiteConfig(
         llm_model_name="openai:gpt-4o-mini",
         use_history=True,
-        session_id="test_lazy_delay",
+        session_id="test_in_run_delay",
         history_truncator_config={
             "post_run_compaction": {
                 "mode": "simple",
@@ -157,8 +157,8 @@ async def test_lazy_start_run_delay():
             "in_run_compaction": {
                 "mode": "simple",
                 "truncation_threshold": 50,
-                "lazy_start_iter": 2,
-                "lazy_start_run": 3,  # Only activate on 3rd run
+                "start_iter": 2,
+                "start_run": 3,  # Only activate on 3rd run
             },
         },
     )
@@ -169,7 +169,7 @@ async def test_lazy_start_run_delay():
         """A tool that returns large content."""
         return make_long_content(step)
 
-    # Run 1: lazy should NOT be active (run_count=1 < start_run=3)
+    # Run 1: in-run compaction should NOT be active (run_count=1 < start_run=3)
     mock1 = MultiToolMockModel(tool_name="big_tool", num_calls=2)
     chain.agent.model = mock1
     await chain.arun({"input": "Run 1"})
@@ -177,7 +177,7 @@ async def test_lazy_start_run_delay():
     assert chain._run_count == 1
     print(f"Run 1 complete, run_count={chain._run_count}")
 
-    # Run 2: lazy should NOT be active
+    # Run 2: in-run compaction should NOT be active
     mock2 = MultiToolMockModel(tool_name="big_tool", num_calls=2)
     chain.agent.model = mock2
     await chain.arun({"input": "Run 2"})
@@ -185,7 +185,7 @@ async def test_lazy_start_run_delay():
     assert chain._run_count == 2
     print(f"Run 2 complete, run_count={chain._run_count}")
 
-    # Collect tool returns from runs 1-2 (should NOT be lazy-truncated)
+    # Collect tool returns from runs 1-2 (should NOT be in-run truncated)
     tool_returns_before = []
     for msg in chain.history_manager._raw_messages:
         if isinstance(msg, ModelRequest):
@@ -194,13 +194,13 @@ async def test_lazy_start_run_delay():
                     tool_returns_before.append(part)
 
     for i, tr in enumerate(tool_returns_before):
-        # None should be lazy-truncated (post-run truncation threshold is 5000, content ~220)
+        # None should be in-run truncated (post-run truncation threshold is 5000, content ~220)
         assert "... [Truncated due to length]" not in tr.content, \
             f"Tool return {i} should NOT be truncated before start_run threshold"
 
-    print("Runs 1-2: no lazy truncation (correct)")
+    print("Runs 1-2: no in-run truncation (correct)")
 
-    # Run 3: lazy SHOULD be active (run_count=3 >= start_run=3)
+    # Run 3: in-run compaction SHOULD be active (run_count=3 >= start_run=3)
     chain.history_manager.clear()  # Clear history to isolate test
     mock3 = MultiToolMockModel(tool_name="big_tool", num_calls=3)
     chain.agent.model = mock3
@@ -216,23 +216,23 @@ async def test_lazy_start_run_delay():
                 if isinstance(part, ToolReturnPart):
                     tool_returns_after.append(part)
 
-    # Now tool #1 should be truncated by lazy summarization
+    # Now tool #1 should be truncated by in-run compaction
     assert len(tool_returns_after) == 3
     assert "... [Truncated due to length]" in tool_returns_after[0].content, \
-        "Tool #1 should be lazy-truncated in run 3"
+        "Tool #1 should be in-run truncated in run 3"
 
-    print("Run 3: lazy truncation active (correct)")
-    print("PASS: Lazy start_run delay test")
+    print("Run 3: in-run truncation active (correct)")
+    print("PASS: In-run start_run delay test")
 
 
-async def test_lazy_start_iter_delay():
-    """Test that lazy summarization respects start_iter within a single run."""
-    print("\n--- Test: Lazy Start Iter Delay ---")
+async def test_in_run_start_iter_delay():
+    """Test that in-run compaction respects start_iter within a single run."""
+    print("\n--- Test: In-Run Start Iter Delay ---")
 
     config = ChainLiteConfig(
         llm_model_name="openai:gpt-4o-mini",
         use_history=True,
-        session_id="test_lazy_iter",
+        session_id="test_in_run_iter",
         history_truncator_config={
             "post_run_compaction": {
                 "mode": "simple",
@@ -241,8 +241,8 @@ async def test_lazy_start_iter_delay():
             "in_run_compaction": {
                 "mode": "simple",
                 "truncation_threshold": 50,
-                "lazy_start_iter": 3,  # Only start at 3rd tool iteration
-                "lazy_start_run": 1,
+                "start_iter": 3,  # Only start at 3rd tool iteration
+                "start_run": 1,
             },
         },
     )
@@ -270,10 +270,10 @@ async def test_lazy_start_iter_delay():
         print(f"  Tool return {i}: truncated={is_truncated}")
 
     # start_iter=3 means:
-    # - iter 1 (tool #1): no lazy (iter_count=1 < 3)
-    # - iter 2 (tool #2): no lazy (iter_count=2 < 3)
-    # - iter 3 (tool #3): lazy kicks in, truncate tool #1 and #2
-    # - iter 4 (tool #4): lazy, truncate tool #1, #2, #3
+    # - iter 1 (tool #1): no compaction (iter_count=1 < 3)
+    # - iter 2 (tool #2): no compaction (iter_count=2 < 3)
+    # - iter 3 (tool #3): compaction kicks in, truncate tool #1 and #2
+    # - iter 4 (tool #4): compaction, truncate tool #1, #2, #3
     # Tool #1 and #2 should be truncated
     assert "... [Truncated due to length]" in tool_returns[0].content
     assert "... [Truncated due to length]" in tool_returns[1].content
@@ -282,7 +282,7 @@ async def test_lazy_start_iter_delay():
     # Tool #4 (last) should NOT be truncated
     assert "STEP_4_END" in tool_returns[3].content
 
-    print("PASS: Lazy start_iter delay test")
+    print("PASS: In-run start_iter delay test")
 
 
 if __name__ == "__main__":
@@ -290,6 +290,6 @@ if __name__ == "__main__":
         os.environ["OPENAI_API_KEY"] = "dummy"
 
     asyncio.run(test_in_run_compaction_basic())
-    asyncio.run(test_lazy_start_run_delay())
-    asyncio.run(test_lazy_start_iter_delay())
-    print("\n=== All lazy summarization tests passed ===")
+    asyncio.run(test_in_run_start_run_delay())
+    asyncio.run(test_in_run_start_iter_delay())
+    print("\n=== All in-run compaction tests passed ===")

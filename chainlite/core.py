@@ -7,27 +7,33 @@ conversation history.
 """
 
 from typing import Optional, Generator, AsyncGenerator, Dict, List, Any, Union
-import re
 import asyncio
 import traceback
 import json
-import base64
-import os
-import mimetypes
 from loguru import logger
 import yaml
-from pydantic import BaseModel, create_model, Field, TypeAdapter
+from pydantic import BaseModel
 import jinja2
-from jinja2 import meta
 
 from pydantic_ai import Agent, BinaryContent, ImageUrl
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.settings import ModelSettings
 
 from .config import ChainLiteConfig
 from .provider import resolve_model_string
 from .history import HistoryManager
 from .streaming import StreamProcessor
+from ._factories import (
+    build_compaction_components,
+    build_model_settings,
+    collect_agent_tools,
+    create_agent_instance,
+)
+from .utils.media import build_prompt
+from .utils.output_model import (
+    create_dynamic_pydantic_model,
+    merge_dictionaries,
+)
+from .utils.prompts import parse_input_variables_from_prompt
 
 
 class ChainLite:
@@ -64,13 +70,6 @@ class ChainLite:
 
         self.setup_chain()
 
-    def _merge_dictionaries(self, dict_list: List[Dict]) -> Dict:
-        """Merges a list of dictionaries into a single dictionary."""
-        merged_dict = {}
-        for single_dict in dict_list:
-            merged_dict.update(single_dict)
-        return merged_dict
-
     def setup_chain(self) -> None:
         """Sets up the Pydantic AI Agent.
 
@@ -86,75 +85,20 @@ class ChainLite:
 
         # Build output model if output_parser is configured
         if self.config.output_parser:
-            self.output_model = self.create_dynamic_pydantic_model(
-                self._merge_dictionaries(self.config.output_parser)
+            self.output_model = create_dynamic_pydantic_model(
+                merge_dictionaries(self.config.output_parser)
             )
 
-        # Truncator and History Setup
-        truncator = None
-        if self.config.history_truncator_config:
-            from .truncators import SimpleTruncator, AutoSummarizor, ChainLiteSummarizor
-
-            t_config = self.config.history_truncator_config
-            post_cfg = t_config.post_run_compaction
-            threshold = 5000
-            if post_cfg and post_cfg.mode:
-                mode = post_cfg.mode
-                threshold = post_cfg.truncation_threshold
-                self._post_run_compaction_start_run = post_cfg.start_run
-
-                if mode == "simple":
-                    truncator = SimpleTruncator(threshold=threshold)
-                elif mode == "auto":
-                    truncator = AutoSummarizor(
-                        threshold=threshold, model_name=self.config.llm_model_name
-                    )
-                elif mode == "custom":
-                    truncator = ChainLiteSummarizor(
-                        config_or_path=(
-                            post_cfg.summarizor_config_path
-                            or post_cfg.summarizor_config_dict
-                        ),
-                        threshold=threshold,
-                    )
-
-            # In-run compaction setup (independent from post-run compaction)
-            in_run_cfg = t_config.in_run_compaction
-            if in_run_cfg and in_run_cfg.mode:
-                in_run_mode = in_run_cfg.mode
-                in_run_threshold = in_run_cfg.truncation_threshold or threshold
-                self._in_run_compaction_config = {
-                    "lazy_start_iter": in_run_cfg.lazy_start_iter,
-                    "lazy_start_run": in_run_cfg.lazy_start_run,
-                    "max_concurrency": in_run_cfg.max_concurrency,
-                }
-                if in_run_mode == "simple":
-                    self._in_run_compactor = SimpleTruncator(threshold=in_run_threshold)
-                elif in_run_mode == "auto":
-                    self._in_run_compactor = AutoSummarizor(
-                        threshold=in_run_threshold,
-                        model_name=self.config.llm_model_name,
-                    )
-                elif in_run_mode == "custom":
-                    self._in_run_compactor = ChainLiteSummarizor(
-                        config_or_path=(
-                            in_run_cfg.summarizor_config_path
-                            or in_run_cfg.summarizor_config_dict
-                        ),
-                        threshold=in_run_threshold,
-                    )
-                logger.info(
-                    f"In-run compaction enabled: mode={in_run_mode}, threshold={in_run_threshold}, "
-                    f"lazy_start_iter={self._in_run_compaction_config['lazy_start_iter']}, "
-                    f"lazy_start_run={self._in_run_compaction_config['lazy_start_run']}, "
-                    f"max_concurrency={self._in_run_compaction_config['max_concurrency']}"
-                )
-
-            # Keep legacy internal names synchronized for compatibility.
-            self._lazy_config = self._in_run_compaction_config
-            self._lazy_truncator = self._in_run_compactor
-
+        (
+            truncator,
+            self._post_run_compaction_start_run,
+            self._in_run_compaction_config,
+            self._in_run_compactor,
+        ) = build_compaction_components(self.config)
         self._truncator = truncator
+        # Keep legacy internal names synchronized for compatibility.
+        self._lazy_config = self._in_run_compaction_config
+        self._lazy_truncator = self._in_run_compactor
 
         if self.config.use_history:
             logger.info(
@@ -173,68 +117,25 @@ class ChainLite:
         # Build system instructions
         instructions = self._build_instructions()
 
-        # Configure model settings
-        settings_dict = {}
-        if self.config.model_settings:
-            settings_dict.update(self.config.model_settings)
-
-        if self.config.temperature is not None:
-            settings_dict["temperature"] = self.config.temperature
-
-        model_settings = None
-        if settings_dict:
-            model_settings = ModelSettings(**settings_dict)
-
-        # Create the agent
-        if self.output_model:
-            self.agent = Agent(
-                model_string,
-                instructions=instructions,
-                output_type=self.output_model,
-                retries=self.config.max_retries or 3,
-            )
-        else:
-            self.agent = Agent(
-                model_string,
-                instructions=instructions,
-                retries=self.config.max_retries or 3,
-            )
-
-        self._model_settings = model_settings
+        self._model_settings = build_model_settings(self.config)
+        self.agent = create_agent_instance(
+            model_string=model_string,
+            instructions=instructions,
+            output_model=self.output_model,
+            retries=self.config.max_retries or 3,
+        )
 
     def _create_agent(self, instructions: Optional[str]) -> Agent:
         """Create an agent instance with the given instructions."""
         model_string = resolve_model_string(self.config.llm_model_name)
-
-        # Collect tools from existing agent
-        tools = []
-        # Check for _function_toolset (pydantic-ai internal structure)
-        if self.agent and hasattr(self.agent, "_function_toolset"):
-            toolset = self.agent._function_toolset
-            if hasattr(toolset, "tools"):
-                tools.extend(toolset.tools.values())
-        # Fallback/Older pydantic-ai version check
-        elif self.agent and hasattr(self.agent, "_function_tools"):
-            tools.extend(self.agent._function_tools.values())
-
-        # Create new agent with tools
-        if self.output_model:
-            new_agent = Agent(
-                model_string,
-                instructions=instructions,
-                output_type=self.output_model,
-                retries=self.config.max_retries or 3,
-                tools=tools,  # Pass existing tools
-            )
-        else:
-            new_agent = Agent(
-                model_string,
-                instructions=instructions,
-                retries=self.config.max_retries or 3,
-                tools=tools,  # Pass existing tools
-            )
-
-        return new_agent
+        tools = collect_agent_tools(self.agent)
+        return create_agent_instance(
+            model_string=model_string,
+            instructions=instructions,
+            output_model=self.output_model,
+            retries=self.config.max_retries or 3,
+            tools=tools,
+        )
 
     def _build_instructions(self, context: Dict[str, Any] = None) -> Optional[str]:
         """Build system instructions from config, optionally rendering with context."""
@@ -245,7 +146,7 @@ class ChainLite:
             if context:
                 # Check if system prompt has variables before attempting render
                 # This avoids unnecessary processing if it's static
-                if self.parse_input_variables_from_prompt(system_prompt):
+                if parse_input_variables_from_prompt(system_prompt):
                     try:
                         template = jinja2.Template(system_prompt)
                         system_prompt = template.render(**context)
@@ -258,56 +159,6 @@ class ChainLite:
             return "\n\n".join(parts)
         return None
 
-    async def _process_media_item(
-        self, item: Any
-    ) -> Union[ImageUrl, BinaryContent, str]:
-        """
-        Process a media item (URL, path, or key) into a Pydantic AI compatible format.
-        """
-        if isinstance(item, (ImageUrl, BinaryContent)):
-            return item
-
-        if isinstance(item, str):
-            # 1. Base64 Check
-            if item.startswith("data:"):
-                try:
-                    header, encoded = item.split(",", 1)
-                    # header looks like "data:image/jpeg;base64"
-                    media_type = header.split(";")[0].split(":")[1]
-                    data = base64.b64decode(encoded)
-                    return BinaryContent(data=data, media_type=media_type)
-                except Exception as e:
-                    logger.warning(f"Failed to process base64 string: {e}")
-                    # Fallthrough to treating as string/url if failed?
-                    # Probably safer to return as is or error. Let's return as is.
-                    return item
-
-            # 2. Remote URL Check
-            if item.startswith(("http://", "https://")):
-                return ImageUrl(item)
-
-            # 3. Local File Check
-            if os.path.exists(item):
-                mime_type, _ = mimetypes.guess_type(item)
-                if not mime_type:
-                    mime_type = "image/jpeg"
-                try:
-
-                    def _read():
-                        with open(item, "rb") as f:
-                            return f.read()
-
-                    file_data = await asyncio.to_thread(_read)
-                    return BinaryContent(data=file_data, media_type=mime_type)
-                except Exception as e:
-                    logger.warning(f"Failed to read local file {item}: {e}")
-                    raise e
-
-            # 4. Fallback (Maybe it's just a non-existent file path or a weird URL)
-            return ImageUrl(item)
-
-        return str(item)
-
     async def _build_prompt(
         self, input_data: dict
     ) -> Union[str, list[Union[str, BinaryContent, ImageUrl]]]:
@@ -315,30 +166,10 @@ class ChainLite:
         prompt_template = self.config.prompt or "{{ input }}"
 
         try:
-            # Create a Jinja2 template and render it with the input data
-            template = jinja2.Template(prompt_template)
-            prompt_str = template.render(**input_data)
+            return await build_prompt(prompt_template, input_data)
         except Exception as e:
             logger.warning(f"Error in prompt formatting: {e}")
             raise e
-
-        content_list = [prompt_str]
-
-        # 1. Check 'images' list input
-        images = input_data.get("images")
-        if images and isinstance(images, list):
-            for img in images:
-                content_list.append(await self._process_media_item(img))
-
-        # 2. Check legacy 'image_url' input
-        image_url = input_data.get("image_url")
-        if image_url:
-            content_list.append(await self._process_media_item(image_url))
-
-        if len(content_list) > 1:
-            return content_list
-
-        return prompt_str
 
     async def _prepare_run(self, input_data: dict) -> tuple[
         Union[str, list[Union[str, BinaryContent, ImageUrl]]],
@@ -414,7 +245,7 @@ class ChainLite:
             )
 
         # Check if system prompt needs dynamic rendering
-        if self.config.system_prompt and self.parse_input_variables_from_prompt(
+        if self.config.system_prompt and parse_input_variables_from_prompt(
             self.config.system_prompt
         ):
             instructions = self._build_instructions(input_data)
@@ -432,7 +263,7 @@ class ChainLite:
             self.history_manager is not None
             and self._in_run_compaction_config is not None
             and self._in_run_compactor is not None
-            and self._run_count >= self._in_run_compaction_config["lazy_start_run"]
+            and self._run_count >= self._in_run_compaction_config["start_run"]
         )
 
     async def _arun_with_in_run_compaction(
@@ -476,7 +307,7 @@ class ChainLite:
                     tool_iter_count += 1
                     if (
                         tool_iter_count
-                        >= self._in_run_compaction_config["lazy_start_iter"]
+                        >= self._in_run_compaction_config["start_iter"]
                     ):
                         _schedule_in_run_if_needed(agent_run.all_messages())
                 node = await agent_run.next(node)
@@ -490,7 +321,7 @@ class ChainLite:
                 ):
                     _schedule_in_run_if_needed(agent_run.all_messages())
 
-            # Final synchronization: ensure outstanding lazy work is applied before
+            # Final synchronization: ensure outstanding in-run work is applied before
             # returning result so history persists the latest summarized state.
             if in_run_task is not None:
                 await in_run_task
@@ -506,72 +337,16 @@ class ChainLite:
 
         return agent_run.result
 
-    def run(self, input_data: dict, deps: Any = None) -> Union[str, Dict[str, Any]]:
-        """
-        Executes the synchronous chat flow.
-
-        Args:
-            input_data: A dictionary containing the input data for the chat flow.
-            deps: Optional dependencies to pass to the agent.
-
-        Returns:
-            The response from the language model, either as string or structured data.
-        """
-        prompt, message_history = asyncio.run(self._prepare_run(input_data))
-
-        # Get agent (potentially dynamic)
-        agent = asyncio.run(self._get_agent_for_run(input_data))
-        self._run_count += 1
-        input_str = input_data.get("input") or str(prompt)
-
-        max_retries = self.config.max_retries or 3
-        current_try = 0
-
-        while True:
-            try:
-                if self._should_use_in_run_compaction():
-                    result = asyncio.run(
-                        self._arun_with_in_run_compaction(
-                            agent,
-                            prompt,
-                            message_history,
-                            self._model_settings,
-                            deps,
-                            input_str,
-                        )
-                    )
-                else:
-                    result = agent.run_sync(
-                        prompt,
-                        message_history=message_history,
-                        model_settings=self._model_settings,
-                        deps=deps,
-                    )
-                return self._process_run_result(result, context=input_str)
-
-            except Exception as e:
-                current_try += 1
-                self._handle_run_error(e, "run", prompt, input_data)
-
-                if current_try >= max_retries:
-                    logger.error("Max retries reached")
-                    raise e
-
-                logger.info(f"Retrying {current_try}/{max_retries}")
-
-    async def arun(
-        self, input_data: dict, deps: Any = None
+    async def _arun_core(
+        self,
+        input_data: dict,
+        deps: Any = None,
+        *,
+        error_context: str,
+        retry_sleep_seconds: float,
+        use_async_result_processing: bool,
     ) -> Union[str, Dict[str, Any]]:
-        """
-        Executes the asynchronous chat flow.
-
-        Args:
-            input_data: A dictionary containing the input data for the chat flow.
-            deps: Optional dependencies to pass to the agent.
-
-        Returns:
-            The response from the language model, either as string or structured data.
-        """
+        """Shared async core for run/arun execution flow."""
         prompt, message_history = await self._prepare_run(input_data)
 
         # Get agent (potentially dynamic)
@@ -600,18 +375,64 @@ class ChainLite:
                         model_settings=self._model_settings,
                         deps=deps,
                     )
-                return await self._aprocess_run_result(result, context=input_str)
+
+                if use_async_result_processing:
+                    return await self._aprocess_run_result(result, context=input_str)
+                return self._process_run_result(result, context=input_str)
 
             except Exception as e:
                 current_try += 1
-                self._handle_run_error(e, "arun", prompt, input_data)
+                self._handle_run_error(e, error_context, prompt, input_data)
 
                 if current_try >= max_retries:
                     logger.error("Max retries reached")
                     raise e
 
                 logger.info(f"Retrying {current_try}/{max_retries}")
-                await asyncio.sleep(1)
+                if retry_sleep_seconds > 0:
+                    await asyncio.sleep(retry_sleep_seconds)
+
+    def run(self, input_data: dict, deps: Any = None) -> Union[str, Dict[str, Any]]:
+        """
+        Executes the synchronous chat flow.
+
+        Args:
+            input_data: A dictionary containing the input data for the chat flow.
+            deps: Optional dependencies to pass to the agent.
+
+        Returns:
+            The response from the language model, either as string or structured data.
+        """
+        return asyncio.run(
+            self._arun_core(
+                input_data,
+                deps,
+                error_context="run",
+                retry_sleep_seconds=0,
+                use_async_result_processing=False,
+            )
+        )
+
+    async def arun(
+        self, input_data: dict, deps: Any = None
+    ) -> Union[str, Dict[str, Any]]:
+        """
+        Executes the asynchronous chat flow.
+
+        Args:
+            input_data: A dictionary containing the input data for the chat flow.
+            deps: Optional dependencies to pass to the agent.
+
+        Returns:
+            The response from the language model, either as string or structured data.
+        """
+        return await self._arun_core(
+            input_data,
+            deps,
+            error_context="arun",
+            retry_sleep_seconds=1,
+            use_async_result_processing=True,
+        )
 
     def stream(self, input_data: dict, deps: Any = None) -> Generator[str, None, None]:
         """
@@ -716,13 +537,6 @@ class ChainLite:
                     apply_truncation=self._should_apply_post_run_compaction(),
                 )
 
-    @property
-    def chat_history_messages(self) -> Optional[List[ModelMessage]]:
-        """Get the current chat history messages."""
-        if self.history_manager:
-            return self.history_manager.messages
-        return None
-
     def _get_full_system_prompt(self) -> str:
         """Extract instructions and tool definitions from the agent."""
         if not self.agent:
@@ -763,85 +577,6 @@ class ChainLite:
                 lines.append(json.dumps(schema_data, indent=2, ensure_ascii=False))
                 lines.append("```")
         return "\n".join(lines)
-
-    @staticmethod
-    def parse_input_variables_from_prompt(text: str) -> List[str]:
-        """Parses input variables from the prompt.
-
-        Returns:
-            A list of strings containing the input variables.
-        """
-        if not isinstance(text, str):
-            return []
-
-        env = jinja2.Environment()
-        try:
-            ast = env.parse(text)
-            input_variables = meta.find_undeclared_variables(ast)
-            return list(input_variables)
-        except Exception as e:
-            logger.error(f"Failed to parse input variables: {e}")
-            return []
-
-    @staticmethod
-    def create_dynamic_pydantic_model(data: Dict[str, Any]) -> type[BaseModel]:
-        """
-        Creates a dynamic Pydantic model from a dictionary.
-
-        Args:
-            data: The dictionary from which to create the Pydantic model.
-
-        Returns:
-            A dynamically created Pydantic model class.
-        """
-        dynamic_model_fields = {}
-        for key, value in data.items():
-            if isinstance(value, str):
-                # Define fields with description
-                dynamic_model_fields[key] = (str, Field(description=value))
-            else:
-                output_type = str
-                output_description = None
-                for v in value:
-                    if v.get("type"):
-                        output_type = ChainLite.get_type_from_string(v["type"])
-                    if v.get("description"):
-                        output_description = v["description"]
-
-                dynamic_model_fields[key] = (
-                    output_type,
-                    (
-                        Field(description=output_description)
-                        if output_description
-                        else ...
-                    ),
-                )
-
-        # Dynamically create a model based on the keys and inferred types from the dictionary
-        dynamic_model = create_model("DynamicOutput", **dynamic_model_fields)
-
-        return dynamic_model
-
-    @staticmethod
-    def get_type_from_string(type_str: str) -> Any:
-        """
-        Gets the type from a available string representation.
-        """
-        available_types = {
-            "str": str,
-            "int": int,
-            "float": float,
-            "bool": bool,
-            "Dict[str, Any]": Dict[str, Any],
-            "Dict[str, str]": Dict[str, str],
-            "List[str]": List[str],
-            "List[Dict[str, Any]]": List[Dict[str, Any]],
-        }
-        try:
-            return available_types[type_str]
-        except KeyError:
-            logger.error(f"Unknown type: {type_str}")
-            return str
 
     @staticmethod
     def load_config_from_yaml(

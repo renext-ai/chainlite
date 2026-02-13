@@ -1,3 +1,4 @@
+import copy
 import json
 import asyncio
 from typing import Optional, List, Dict, Any, Union, TYPE_CHECKING
@@ -135,7 +136,7 @@ class HistoryManager:
         apply_truncation: bool = True,
     ) -> None:
         """Add new messages to history (Synchronous)."""
-        self._raw_messages.extend(messages)
+        self._raw_messages.extend(copy.deepcopy(messages))
         if self.truncator and apply_truncation:
             processed_messages = self.truncator.truncate(messages, context=context)
             self._messages.extend(processed_messages)
@@ -153,7 +154,7 @@ class HistoryManager:
         apply_truncation: bool = True,
     ) -> None:
         """Add new messages to history (Asynchronous)."""
-        self._raw_messages.extend(messages)
+        self._raw_messages.extend(copy.deepcopy(messages))
         if self.truncator and apply_truncation:
             processed_messages = await self.truncator.atruncate(
                 messages, context=context

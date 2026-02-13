@@ -17,8 +17,8 @@ history_truncator_config:
   # in_run_compaction:
   #   mode: "simple"
   #   truncation_threshold: 3000
-  #   lazy_start_iter: 2
-  #   lazy_start_run: 1
+  #   start_iter: 2
+  #   start_run: 1
   #   max_concurrency: 4
 ```
 
