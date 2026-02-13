@@ -173,6 +173,7 @@ class HistoryManager:
         compactor: BaseHistoryTruncator,
         context: Optional[str] = None,
         max_concurrency: int = 4,
+        include_latest_tool_block: bool = False,
     ) -> None:
         """Compact older tool results in-place while preserving the latest tool block."""
         if not compactor:
@@ -191,10 +192,11 @@ class HistoryManager:
         if last_tool_msg_idx < 0:
             return
 
-        # Collect candidates from older messages only.
+        # Collect candidates from older messages only by default.
+        # Optionally include latest tool block for aggressive first-iteration compaction.
         candidates: List[tuple[ModelRequest, int, ToolReturnPart]] = []
         for i, msg in enumerate(messages):
-            if i >= last_tool_msg_idx:
+            if not include_latest_tool_block and i >= last_tool_msg_idx:
                 break
             if not isinstance(msg, ModelRequest):
                 continue

@@ -4,6 +4,10 @@ system_prompt: "You are a test assistant capable of generating various types of 
 use_history: true
 session_id: "integration_test_session"
 history_truncator_config:
-  mode: "simple"
-  truncation_threshold: 100
+  in_run_compaction:
+    mode: "auto"
+    truncation_threshold: 500
+    start_iter: 1
+    start_run: 1
+    max_concurrency: 4
 config_name: "integration_truncation_config"

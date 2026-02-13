@@ -39,7 +39,13 @@ async def test_auto_summarization():
     config = ChainLiteConfig(
         llm_model_name="openai:gpt-4o-mini",
         use_history=True,
-        history_truncator_config={"mode": "auto", "truncation_threshold": 50},
+        history_truncator_config={
+            "post_run_compaction": {
+                "mode": "auto",
+                "truncation_threshold": 50,
+                "start_run": 1,
+            }
+        },
     )
     cl = ChainLite(config)
 

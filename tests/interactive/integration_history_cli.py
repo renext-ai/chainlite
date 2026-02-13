@@ -96,6 +96,9 @@ async def integration_history_cli(config_path: str):
                     if chain.history_manager
                     else 0
                 )
+                context_start_index = (
+                    len(chain.history_manager.messages) if chain.history_manager else 0
+                )
 
                 async for chunk in chain.astream({"input": user_input}):
                     print(chunk, end="", flush=True)
@@ -103,6 +106,7 @@ async def integration_history_cli(config_path: str):
 
                 if chain.history_manager:
                     new_msgs = chain.history_manager.raw_messages[history_start_index:]
+                    new_ctx_msgs = chain.history_manager.messages[context_start_index:]
                     for msg in new_msgs:
                         if isinstance(msg, ModelResponse):
                             for part in msg.parts:
@@ -117,6 +121,36 @@ async def integration_history_cli(config_path: str):
                                     logger.info(
                                         f" > [RESULT] Tool '{part.tool_name}' returned {content_len} chars"
                                     )
+
+                    raw_tool_parts = []
+                    for msg in new_msgs:
+                        if isinstance(msg, ModelRequest):
+                            for part in msg.parts:
+                                if isinstance(part, ToolReturnPart):
+                                    raw_tool_parts.append(part)
+
+                    ctx_tool_parts = []
+                    for msg in new_ctx_msgs:
+                        if isinstance(msg, ModelRequest):
+                            for part in msg.parts:
+                                if isinstance(part, ToolReturnPart):
+                                    ctx_tool_parts.append(part)
+
+                    for i, raw_part in enumerate(raw_tool_parts):
+                        raw_len = len(str(raw_part.content))
+                        ctx_len = None
+                        summarized = False
+                        if i < len(ctx_tool_parts):
+                            ctx_content = str(ctx_tool_parts[i].content)
+                            ctx_len = len(ctx_content)
+                            summarized = (
+                                "[Summarized Output]:" in ctx_content
+                                or "... [Truncated due to length]" in ctx_content
+                            )
+                        logger.info(
+                            f" > [COMPARE #{i+1}] tool={raw_part.tool_name} raw_len={raw_len} "
+                            f"ctx_len={ctx_len if ctx_len is not None else 'n/a'} summarized={summarized}"
+                        )
 
             except Exception as e:
                 print(f"\nError: {e}")

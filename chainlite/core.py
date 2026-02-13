@@ -17,6 +17,7 @@ import jinja2
 
 from pydantic_ai import Agent, BinaryContent, ImageUrl
 from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelRequest, ToolReturnPart
 
 from .config import ChainLiteConfig
 from .provider import resolve_model_string
@@ -38,6 +39,7 @@ from .adapters.pydantic_ai import (
     get_agent_instructions,
     get_agent_tool_schemas,
     is_call_tools_node,
+    is_model_request_node,
 )
 
 
@@ -271,6 +273,44 @@ class ChainLite:
             and self._run_count >= self._in_run_compaction_config["start_run"]
         )
 
+    def _count_tool_result_blocks(self, messages: List[ModelMessage]) -> int:
+        """Count ModelRequest blocks that contain ToolReturnPart."""
+        count = 0
+        for msg in messages:
+            if isinstance(msg, ModelRequest) and any(
+                isinstance(p, ToolReturnPart) for p in msg.parts
+            ):
+                count += 1
+        return count
+
+    def _should_include_latest_for_in_run(self) -> bool:
+        """For start_iter=1, allow compacting the latest tool block."""
+        return (
+            self._in_run_compaction_config is not None
+            and int(self._in_run_compaction_config.get("start_iter", 2)) <= 1
+        )
+
+    async def _apply_stream_in_run_compaction_if_needed(
+        self,
+        messages: List[ModelMessage],
+        context: Optional[str],
+    ) -> None:
+        """Apply in-run compaction for streaming runs before persisting history."""
+        if not self._should_use_in_run_compaction():
+            return
+
+        tool_blocks = self._count_tool_result_blocks(messages)
+        if tool_blocks < self._in_run_compaction_config["start_iter"]:
+            return
+
+        await self.history_manager.apply_in_run_compaction_to_previous_tool_results(
+            messages,
+            compactor=self._in_run_compactor,
+            context=context,
+            max_concurrency=self._in_run_compaction_config.get("max_concurrency", 4),
+            include_latest_tool_block=self._should_include_latest_for_in_run(),
+        )
+
     async def _arun_with_in_run_compaction(
         self, agent, prompt, message_history, model_settings, deps, context
     ):
@@ -292,6 +332,7 @@ class ChainLite:
                         max_concurrency=self._in_run_compaction_config.get(
                             "max_concurrency", 4
                         ),
+                        include_latest_tool_block=self._should_include_latest_for_in_run(),
                     )
                 )
                 in_run_refresh_requested = False
@@ -307,14 +348,15 @@ class ChainLite:
         ) as agent_run:
             node = agent_run.next_node
             while not isinstance(node, End):
-                if is_call_tools_node(node):
+                was_call_tools = is_call_tools_node(node)
+                node = await agent_run.next(node)
+                if was_call_tools:
                     tool_iter_count += 1
                     if (
                         tool_iter_count
                         >= self._in_run_compaction_config["start_iter"]
                     ):
                         _schedule_in_run_if_needed(agent_run.all_messages())
-                node = await agent_run.next(node)
 
                 # If a pending refresh was requested while the previous task
                 # was running, immediately schedule another pass when it completes.
@@ -337,9 +379,91 @@ class ChainLite:
                     max_concurrency=self._in_run_compaction_config.get(
                         "max_concurrency", 4
                     ),
+                    include_latest_tool_block=self._should_include_latest_for_in_run(),
                 )
 
         return agent_run.result
+
+    async def _astream_with_in_run_compaction(
+        self, agent, prompt, message_history, deps, context
+    ) -> AsyncGenerator[str, None]:
+        """Stream via agent.iter so in-run compaction can happen mid-run."""
+        from pydantic_graph import End
+
+        tool_iter_count = 0
+        in_run_task: Optional[asyncio.Task] = None
+        in_run_refresh_requested = False
+        processor = StreamProcessor()
+
+        def _schedule_in_run_if_needed(messages: list) -> None:
+            nonlocal in_run_task, in_run_refresh_requested
+            if in_run_task is None or in_run_task.done():
+                in_run_task = asyncio.create_task(
+                    self.history_manager.apply_in_run_compaction_to_previous_tool_results(
+                        messages,
+                        compactor=self._in_run_compactor,
+                        context=context,
+                        max_concurrency=self._in_run_compaction_config.get(
+                            "max_concurrency", 4
+                        ),
+                        include_latest_tool_block=self._should_include_latest_for_in_run(),
+                    )
+                )
+                in_run_refresh_requested = False
+            else:
+                in_run_refresh_requested = True
+
+        async with agent.iter(
+            prompt,
+            message_history=message_history,
+            model_settings=self._model_settings,
+            deps=deps,
+        ) as agent_run:
+            node = agent_run.next_node
+            while not isinstance(node, End):
+                if is_model_request_node(node):
+                    async with node.stream(agent_run.ctx) as stream:
+                        async for message in stream.stream_responses():
+                            for chunk in processor.process_message(message):
+                                yield chunk
+
+                was_call_tools = is_call_tools_node(node)
+
+                node = await agent_run.next(node)
+                if was_call_tools:
+                    tool_iter_count += 1
+                    if tool_iter_count >= self._in_run_compaction_config["start_iter"]:
+                        _schedule_in_run_if_needed(agent_run.all_messages())
+
+                if (
+                    in_run_task is not None
+                    and in_run_task.done()
+                    and in_run_refresh_requested
+                ):
+                    _schedule_in_run_if_needed(agent_run.all_messages())
+
+            if in_run_task is not None:
+                await in_run_task
+            if in_run_refresh_requested:
+                await self.history_manager.apply_in_run_compaction_to_previous_tool_results(
+                    agent_run.all_messages(),
+                    compactor=self._in_run_compactor,
+                    context=context,
+                    max_concurrency=self._in_run_compaction_config.get(
+                        "max_concurrency", 4
+                    ),
+                    include_latest_tool_block=self._should_include_latest_for_in_run(),
+                )
+
+            for chunk in processor.close():
+                yield chunk
+
+            if self.history_manager and agent_run.result is not None:
+                await self.history_manager.add_messages_async(
+                    agent_run.result.new_messages(),
+                    context=context,
+                    apply_truncation=self._should_apply_post_run_compaction(),
+                )
 
     async def _arun_core(
         self,
@@ -454,6 +578,40 @@ class ChainLite:
         # Get agent (potentially dynamic)
         agent = asyncio.run(self._get_agent_for_run(input_data))
         self._run_count += 1
+        input_str = input_data.get("input") or str(prompt)
+
+        if self._should_use_in_run_compaction():
+            loop = asyncio.new_event_loop()
+            old_loop = None
+            async_gen = None
+            try:
+                try:
+                    old_loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    old_loop = None
+                asyncio.set_event_loop(loop)
+                async_gen = self._astream_with_in_run_compaction(
+                    agent,
+                    prompt,
+                    message_history,
+                    deps,
+                    input_str,
+                )
+                while True:
+                    try:
+                        chunk = loop.run_until_complete(async_gen.__anext__())
+                    except StopAsyncIteration:
+                        break
+                    yield chunk
+                return
+            finally:
+                if async_gen is not None:
+                    try:
+                        loop.run_until_complete(async_gen.aclose())
+                    except Exception:
+                        pass
+                loop.close()
+                asyncio.set_event_loop(old_loop)
 
         result = agent.run_stream_sync(
             prompt,
@@ -486,9 +644,15 @@ class ChainLite:
 
         # Update history after stream completes
         if self.history_manager:
-            input_str = input_data.get("input") or str(prompt)
+            new_messages = result.new_messages()
+            asyncio.run(
+                self._apply_stream_in_run_compaction_if_needed(
+                    new_messages,
+                    context=input_str,
+                )
+            )
             self.history_manager.add_messages(
-                result.new_messages(),
+                new_messages,
                 context=input_str,
                 apply_truncation=self._should_apply_post_run_compaction(),
             )
@@ -503,6 +667,18 @@ class ChainLite:
         prompt, message_history = await self._prepare_run(input_data)
         agent = await self._get_agent_for_run(input_data)
         self._run_count += 1
+        input_str = input_data.get("input") or str(prompt)
+
+        if self._should_use_in_run_compaction():
+            async for chunk in self._astream_with_in_run_compaction(
+                agent,
+                prompt,
+                message_history,
+                deps,
+                input_str,
+            ):
+                yield chunk
+            return
 
         async with agent.run_stream(
             prompt,
@@ -538,9 +714,13 @@ class ChainLite:
             # Update history after stream completes
             # Update history after stream completes
             if self.history_manager:
-                input_str = input_data.get("input") or str(prompt)
+                new_messages = result.new_messages()
+                await self._apply_stream_in_run_compaction_if_needed(
+                    new_messages,
+                    context=input_str,
+                )
                 await self.history_manager.add_messages_async(
-                    result.new_messages(),
+                    new_messages,
                     context=input_str,
                     apply_truncation=self._should_apply_post_run_compaction(),
                 )

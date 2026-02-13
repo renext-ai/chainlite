@@ -73,3 +73,19 @@ def is_call_tools_node(node: Any) -> bool:
     # Fallback path for version drift where class import/membership changes.
     node_name = type(node).__name__
     return node_name == "CallToolsNode"
+
+
+def is_model_request_node(node: Any) -> bool:
+    """Best-effort detection for pydantic-ai model-request graph nodes."""
+    if node is None:
+        return False
+
+    try:
+        from pydantic_ai.agent import ModelRequestNode  # type: ignore
+
+        return isinstance(node, ModelRequestNode)
+    except Exception:
+        pass
+
+    node_name = type(node).__name__
+    return node_name == "ModelRequestNode"

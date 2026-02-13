@@ -3,7 +3,9 @@ system_prompt: "You are a test assistant. Use tools to generate content."
 use_history: true
 session_id: "integration_test_custom_summary"
 history_truncator_config:
-  mode: "custom"
-  truncation_threshold: 100
-  summarizer_config_path: "tests/custom_summarizer.yaml"
+  post_run_compaction:
+    mode: "custom"
+    truncation_threshold: 100
+    start_run: 1
+    summarizer_config_path: "tests/prompts/custom_summarizer.yaml"
 config_name: "integration_custom_summary_config"

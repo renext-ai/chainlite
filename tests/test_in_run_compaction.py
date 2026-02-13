@@ -285,6 +285,86 @@ async def test_in_run_start_iter_delay():
     print("PASS: In-run start_iter delay test")
 
 
+async def test_in_run_start_iter_one_compacts_first_tool_output():
+    """start_iter=1 should allow compacting the first tool output in-run."""
+    config = ChainLiteConfig(
+        llm_model_name="openai:gpt-4o-mini",
+        use_history=True,
+        session_id="test_in_run_iter_one",
+        history_truncator_config={
+            "post_run_compaction": {
+                "mode": "simple",
+                "truncation_threshold": 5000,
+            },
+            "in_run_compaction": {
+                "mode": "simple",
+                "truncation_threshold": 50,
+                "start_iter": 1,
+                "start_run": 1,
+            },
+        },
+    )
+    chain = ChainLite(config)
+
+    @chain.agent.tool_plain
+    def big_tool(step: int) -> str:
+        return make_long_content(step)
+
+    mock = MultiToolMockModel(tool_name="big_tool", num_calls=1)
+    chain.agent.model = mock
+    await chain.arun({"input": "Run one tool."})
+
+    tool_returns = []
+    for msg in chain.history_manager._raw_messages:
+        if isinstance(msg, ModelRequest):
+            for part in msg.parts:
+                if isinstance(part, ToolReturnPart):
+                    tool_returns.append(part)
+
+    assert len(tool_returns) == 1
+    assert "... [Truncated due to length]" in tool_returns[0].content
+
+
+async def test_in_run_start_iter_two_does_not_compact_first_tool_output():
+    """start_iter=2 should keep single first tool output un-compacted in-run."""
+    config = ChainLiteConfig(
+        llm_model_name="openai:gpt-4o-mini",
+        use_history=True,
+        session_id="test_in_run_iter_two",
+        history_truncator_config={
+            "post_run_compaction": {
+                "mode": "simple",
+                "truncation_threshold": 5000,
+            },
+            "in_run_compaction": {
+                "mode": "simple",
+                "truncation_threshold": 50,
+                "start_iter": 2,
+                "start_run": 1,
+            },
+        },
+    )
+    chain = ChainLite(config)
+
+    @chain.agent.tool_plain
+    def big_tool(step: int) -> str:
+        return make_long_content(step)
+
+    mock = MultiToolMockModel(tool_name="big_tool", num_calls=1)
+    chain.agent.model = mock
+    await chain.arun({"input": "Run one tool."})
+
+    tool_returns = []
+    for msg in chain.history_manager._raw_messages:
+        if isinstance(msg, ModelRequest):
+            for part in msg.parts:
+                if isinstance(part, ToolReturnPart):
+                    tool_returns.append(part)
+
+    assert len(tool_returns) == 1
+    assert "... [Truncated due to length]" not in tool_returns[0].content
+
+
 if __name__ == "__main__":
     if not os.getenv("OPENAI_API_KEY"):
         os.environ["OPENAI_API_KEY"] = "dummy"
@@ -292,4 +372,6 @@ if __name__ == "__main__":
     asyncio.run(test_in_run_compaction_basic())
     asyncio.run(test_in_run_start_run_delay())
     asyncio.run(test_in_run_start_iter_delay())
+    asyncio.run(test_in_run_start_iter_one_compacts_first_tool_output())
+    asyncio.run(test_in_run_start_iter_two_does_not_compact_first_tool_output())
     print("\n=== All in-run compaction tests passed ===")

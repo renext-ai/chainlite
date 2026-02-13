@@ -142,6 +142,69 @@ class TestDepsPassthrough(unittest.TestCase):
         call_kwargs = self.chain_lite.history_manager.add_messages_async.call_args.kwargs
         self.assertTrue(call_kwargs["apply_truncation"])
 
+    def test_stream_applies_in_run_compaction_when_threshold_reached(self):
+        self.chain_lite.history_manager = MagicMock()
+        self.chain_lite._in_run_compaction_config = {
+            "start_iter": 2,
+            "start_run": 1,
+            "max_concurrency": 4,
+        }
+        self.chain_lite._in_run_compactor = MagicMock()
+        helper_calls = {"count": 0}
+
+        def _fake_helper(*args, **kwargs):
+            helper_calls["count"] += 1
+
+            async def _gen():
+                yield "chunk1"
+
+            return _gen()
+
+        self.chain_lite._astream_with_in_run_compaction = MagicMock(
+            side_effect=_fake_helper
+        )
+
+        chunks = list(self.chain_lite.stream({"input": "test"}, deps=self.deps))
+
+        self.assertEqual(chunks, ["chunk1"])
+        self.assertEqual(helper_calls["count"], 1)
+        self.chain_lite.agent.run_stream_sync.assert_not_called()
+
+    def test_astream_applies_in_run_compaction_when_threshold_reached(self):
+        self.chain_lite.history_manager = MagicMock()
+        self.chain_lite._in_run_compaction_config = {
+            "start_iter": 2,
+            "start_run": 1,
+            "max_concurrency": 4,
+        }
+        self.chain_lite._in_run_compactor = MagicMock()
+        helper_calls = {"count": 0}
+
+        def _fake_helper(*args, **kwargs):
+            helper_calls["count"] += 1
+
+            async def _gen():
+                yield "chunk1"
+                yield "chunk2"
+
+            return _gen()
+
+        self.chain_lite._astream_with_in_run_compaction = MagicMock(
+            side_effect=_fake_helper
+        )
+
+        async def _helper():
+            chunks = []
+            async for chunk in self.chain_lite.astream({"input": "test"}, deps=self.deps):
+                chunks.append(chunk)
+            return chunks
+
+        chunks = asyncio.run(_helper())
+
+        self.assertEqual(chunks, ["chunk1", "chunk2"])
+        self.assertEqual(helper_calls["count"], 1)
+        self.chain_lite.agent.run_stream.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
