@@ -25,6 +25,26 @@ def get_agent_tools(agent: Optional[Any]) -> list[Any]:
     return []
 
 
+def get_agent_tool_schemas(agent: Optional[Any]) -> list[dict[str, Any]]:
+    """Return normalized tool schema dictionaries for auditing/export."""
+    schemas: list[dict[str, Any]] = []
+    for tool in get_agent_tools(agent):
+        name = getattr(tool, "name", "unknown")
+        description = getattr(tool, "description", None)
+
+        schema_data: dict[str, Any] = {
+            "name": name,
+            "description": description,
+        }
+
+        function_schema = getattr(tool, "function_schema", None)
+        if function_schema is not None:
+            schema_data["parameters"] = getattr(function_schema, "json_schema", {})
+
+        schemas.append(schema_data)
+    return schemas
+
+
 def get_agent_instructions(agent: Optional[Any]) -> list[str]:
     """Return normalized string instructions from an agent."""
     if not agent:
@@ -53,4 +73,3 @@ def is_call_tools_node(node: Any) -> bool:
     # Fallback path for version drift where class import/membership changes.
     node_name = type(node).__name__
     return node_name == "CallToolsNode"
-

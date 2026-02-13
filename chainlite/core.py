@@ -36,7 +36,7 @@ from .utils.output_model import (
 from .utils.prompts import parse_input_variables_from_prompt
 from .adapters.pydantic_ai import (
     get_agent_instructions,
-    get_agent_tools,
+    get_agent_tool_schemas,
     is_call_tools_node,
 )
 
@@ -555,28 +555,17 @@ class ChainLite:
                 lines.append(f"{inst}\n")
 
         # 2. Tools
-        tools = get_agent_tools(self.agent)
-        if tools:
+        tool_schemas = get_agent_tool_schemas(self.agent)
+        if tool_schemas:
             if lines:
                 lines.append("\n")
             lines.append("## Tools\n")
-            for tool in tools:
-                name = getattr(tool, "name", "unknown")
+            for schema_data in tool_schemas:
+                name = schema_data.get("name", "unknown")
+                description = schema_data.get("description")
                 lines.append(f"\n### Tool: {name}")
-                description = getattr(tool, "description", None)
                 if description:
                     lines.append(f"**Description**: {description}")
-
-                # Build a complete tool schema for audit
-                schema_data = {
-                    "name": name,
-                    "description": description,
-                }
-                if hasattr(tool, "function_schema"):
-                    # Use json_schema from pydantic-ai's FunctionSchema
-                    schema_data["parameters"] = getattr(
-                        tool.function_schema, "json_schema", {}
-                    )
 
                 lines.append("```json")
                 lines.append(json.dumps(schema_data, indent=2, ensure_ascii=False))
