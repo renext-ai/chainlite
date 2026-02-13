@@ -108,6 +108,40 @@ class TestDepsPassthrough(unittest.TestCase):
         call_args = self.chain_lite.agent.run_stream.call_args
         self.assertEqual(call_args.kwargs["deps"], self.deps)
 
+    def test_stream_increments_run_count_and_applies_truncation_gate(self):
+        self.chain_lite.history_manager = MagicMock()
+        self.chain_lite._post_run_compaction_start_run = 1
+        self.assertEqual(self.chain_lite._run_count, 0)
+
+        list(self.chain_lite.stream({"input": "test"}, deps=self.deps))
+
+        self.assertEqual(self.chain_lite._run_count, 1)
+        self.chain_lite.history_manager.add_messages.assert_called_once()
+        call_kwargs = self.chain_lite.history_manager.add_messages.call_args.kwargs
+        self.assertTrue(call_kwargs["apply_truncation"])
+
+    def test_astream_increments_run_count_and_applies_truncation_gate(self):
+        async def async_iter():
+            yield "chunk1"
+            yield "chunk2"
+
+        self.mock_stream_result.stream_text.return_value = async_iter()
+        self.chain_lite.history_manager = MagicMock()
+        self.chain_lite.history_manager.add_messages_async = AsyncMock()
+        self.chain_lite._post_run_compaction_start_run = 1
+        self.assertEqual(self.chain_lite._run_count, 0)
+
+        async def _helper():
+            async for _ in self.chain_lite.astream({"input": "test"}, deps=self.deps):
+                pass
+
+        asyncio.run(_helper())
+
+        self.assertEqual(self.chain_lite._run_count, 1)
+        self.chain_lite.history_manager.add_messages_async.assert_called_once()
+        call_kwargs = self.chain_lite.history_manager.add_messages_async.call_args.kwargs
+        self.assertTrue(call_kwargs["apply_truncation"])
+
 
 if __name__ == "__main__":
     unittest.main()
