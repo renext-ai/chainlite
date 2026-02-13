@@ -1,4 +1,6 @@
+import copy
 import json
+import asyncio
 from typing import Optional, List, Dict, Any, Union, TYPE_CHECKING
 from loguru import logger
 from pydantic import TypeAdapter
@@ -128,11 +130,14 @@ class HistoryManager:
         return messages
 
     def add_messages(
-        self, messages: List[ModelMessage], context: Optional[str] = None
+        self,
+        messages: List[ModelMessage],
+        context: Optional[str] = None,
+        apply_truncation: bool = True,
     ) -> None:
         """Add new messages to history (Synchronous)."""
-        self._raw_messages.extend(messages)
-        if self.truncator:
+        self._raw_messages.extend(copy.deepcopy(messages))
+        if self.truncator and apply_truncation:
             processed_messages = self.truncator.truncate(messages, context=context)
             self._messages.extend(processed_messages)
         else:
@@ -143,11 +148,14 @@ class HistoryManager:
             self._save_to_redis()
 
     async def add_messages_async(
-        self, messages: List[ModelMessage], context: Optional[str] = None
+        self,
+        messages: List[ModelMessage],
+        context: Optional[str] = None,
+        apply_truncation: bool = True,
     ) -> None:
         """Add new messages to history (Asynchronous)."""
-        self._raw_messages.extend(messages)
-        if self.truncator:
+        self._raw_messages.extend(copy.deepcopy(messages))
+        if self.truncator and apply_truncation:
             processed_messages = await self.truncator.atruncate(
                 messages, context=context
             )
@@ -158,6 +166,77 @@ class HistoryManager:
         self._truncate_history(self._messages)
         if self._redis_client:
             self._save_to_redis()
+
+    async def apply_in_run_compaction_to_previous_tool_results(
+        self,
+        messages: List[ModelMessage],
+        compactor: BaseHistoryTruncator,
+        context: Optional[str] = None,
+        max_concurrency: int = 4,
+    ) -> None:
+        """Compact older tool results in-place while preserving the latest tool block."""
+        if not compactor:
+            return
+
+        # Find the last ModelRequest that contains ToolReturnPart (= current tool results)
+        last_tool_msg_idx = -1
+        for i in range(len(messages) - 1, -1, -1):
+            msg = messages[i]
+            if isinstance(msg, ModelRequest) and any(
+                isinstance(p, ToolReturnPart) for p in msg.parts
+            ):
+                last_tool_msg_idx = i
+                break
+
+        if last_tool_msg_idx < 0:
+            return
+
+        # Collect candidates from older messages only.
+        candidates: List[tuple[ModelRequest, int, ToolReturnPart]] = []
+        for i, msg in enumerate(messages):
+            if i >= last_tool_msg_idx:
+                break
+            if not isinstance(msg, ModelRequest):
+                continue
+            for part_idx, part in enumerate(msg.parts):
+                if (
+                    isinstance(part, ToolReturnPart)
+                    and isinstance(part.content, str)
+                    and len(part.content) > compactor.threshold
+                ):
+                    candidates.append((msg, part_idx, part))
+
+        if not candidates:
+            return
+
+        semaphore = asyncio.Semaphore(max(1, int(max_concurrency)))
+
+        async def _process_part(part: ToolReturnPart) -> ToolReturnPart:
+            async with semaphore:
+                return await compactor.atruncate_part(part, context)
+
+        processed_results = await asyncio.gather(
+            *(_process_part(part) for _, _, part in candidates),
+            return_exceptions=True,
+        )
+
+        # Apply processed parts back while preserving per-message order.
+        msg_parts_map: Dict[int, list] = {}
+        msg_obj_map: Dict[int, ModelRequest] = {}
+
+        for (msg, part_idx, _), processed in zip(candidates, processed_results):
+            if isinstance(processed, Exception):
+                logger.warning(f"In-run compaction failed for part: {processed}")
+                continue
+
+            msg_id = id(msg)
+            if msg_id not in msg_parts_map:
+                msg_parts_map[msg_id] = list(msg.parts)
+                msg_obj_map[msg_id] = msg
+            msg_parts_map[msg_id][part_idx] = processed
+
+        for msg_id, new_parts in msg_parts_map.items():
+            msg_obj_map[msg_id].parts = new_parts
 
     def _truncate_history(self, messages_list: List[ModelMessage]) -> None:
         """Smartly truncate history list to max_messages."""

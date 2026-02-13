@@ -7,27 +7,38 @@ conversation history.
 """
 
 from typing import Optional, Generator, AsyncGenerator, Dict, List, Any, Union
-import re
 import asyncio
 import traceback
 import json
-import base64
-import os
-import mimetypes
 from loguru import logger
 import yaml
-from pydantic import BaseModel, create_model, Field, TypeAdapter
+from pydantic import BaseModel
 import jinja2
-from jinja2 import meta
 
 from pydantic_ai import Agent, BinaryContent, ImageUrl
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.settings import ModelSettings
 
 from .config import ChainLiteConfig
 from .provider import resolve_model_string
 from .history import HistoryManager
 from .streaming import StreamProcessor
+from ._factories import (
+    build_compaction_components,
+    build_model_settings,
+    collect_agent_tools,
+    create_agent_instance,
+)
+from .utils.media import build_prompt
+from .utils.output_model import (
+    create_dynamic_pydantic_model,
+    merge_dictionaries,
+)
+from .utils.prompts import parse_input_variables_from_prompt
+from .adapters.pydantic_ai import (
+    get_agent_instructions,
+    get_agent_tool_schemas,
+    is_call_tools_node,
+)
 
 
 class ChainLite:
@@ -53,15 +64,16 @@ class ChainLite:
         self.output_model: Optional[type[BaseModel]] = None
         self.history_manager: Optional[HistoryManager] = None
         self.exception_retry = 0
+        self._truncator = None
+        self._post_run_compaction_start_run = 1
+        self._in_run_compaction_config = None
+        self._in_run_compactor = None
+        # Backward-compatible aliases for older integrations.
+        self._lazy_config = None
+        self._lazy_truncator = None
+        self._run_count = 0
 
         self.setup_chain()
-
-    def _merge_dictionaries(self, dict_list: List[Dict]) -> Dict:
-        """Merges a list of dictionaries into a single dictionary."""
-        merged_dict = {}
-        for single_dict in dict_list:
-            merged_dict.update(single_dict)
-        return merged_dict
 
     def setup_chain(self) -> None:
         """Sets up the Pydantic AI Agent.
@@ -78,39 +90,20 @@ class ChainLite:
 
         # Build output model if output_parser is configured
         if self.config.output_parser:
-            self.output_model = self.create_dynamic_pydantic_model(
-                self._merge_dictionaries(self.config.output_parser)
+            self.output_model = create_dynamic_pydantic_model(
+                merge_dictionaries(self.config.output_parser)
             )
 
-        # Truncator and History Setup
-        truncator = None
-        if self.config.history_truncator_config:
-            from .truncators import SimpleTruncator, AutoSummarizor, ChainLiteSummarizor
-
-            t_config = self.config.history_truncator_config
-            mode = t_config.get("mode")
-            threshold = t_config.get("truncation_threshold", 5000)
-
-            if mode == "simple":
-                truncator = SimpleTruncator(threshold=threshold)
-            elif mode == "auto":
-                truncator = AutoSummarizor(
-                    threshold=threshold, model_name=self.config.llm_model_name
-                )
-            elif mode == "custom":
-                path = t_config.get("summarizor_config_path")
-                dict_cfg = t_config.get("summarizor_config_dict")
-                if path and dict_cfg:
-                    raise ValueError(
-                        "Cannot specify both 'summarizor_config_path' and 'summarizor_config_dict'"
-                    )
-                if not path and not dict_cfg:
-                    raise ValueError(
-                        "Must specify either 'summarizor_config_path' or 'summarizor_config_dict' for custom truncator"
-                    )
-                truncator = ChainLiteSummarizor(
-                    config_or_path=path or dict_cfg, threshold=threshold
-                )
+        (
+            truncator,
+            self._post_run_compaction_start_run,
+            self._in_run_compaction_config,
+            self._in_run_compactor,
+        ) = build_compaction_components(self.config)
+        self._truncator = truncator
+        # Keep legacy internal names synchronized for compatibility.
+        self._lazy_config = self._in_run_compaction_config
+        self._lazy_truncator = self._in_run_compactor
 
         if self.config.use_history:
             logger.info(
@@ -129,68 +122,25 @@ class ChainLite:
         # Build system instructions
         instructions = self._build_instructions()
 
-        # Configure model settings
-        settings_dict = {}
-        if self.config.model_settings:
-            settings_dict.update(self.config.model_settings)
-
-        if self.config.temperature is not None:
-            settings_dict["temperature"] = self.config.temperature
-
-        model_settings = None
-        if settings_dict:
-            model_settings = ModelSettings(**settings_dict)
-
-        # Create the agent
-        if self.output_model:
-            self.agent = Agent(
-                model_string,
-                instructions=instructions,
-                output_type=self.output_model,
-                retries=self.config.max_retries or 3,
-            )
-        else:
-            self.agent = Agent(
-                model_string,
-                instructions=instructions,
-                retries=self.config.max_retries or 3,
-            )
-
-        self._model_settings = model_settings
+        self._model_settings = build_model_settings(self.config)
+        self.agent = create_agent_instance(
+            model_string=model_string,
+            instructions=instructions,
+            output_model=self.output_model,
+            retries=self.config.max_retries or 3,
+        )
 
     def _create_agent(self, instructions: Optional[str]) -> Agent:
         """Create an agent instance with the given instructions."""
         model_string = resolve_model_string(self.config.llm_model_name)
-
-        # Collect tools from existing agent
-        tools = []
-        # Check for _function_toolset (pydantic-ai internal structure)
-        if self.agent and hasattr(self.agent, "_function_toolset"):
-            toolset = self.agent._function_toolset
-            if hasattr(toolset, "tools"):
-                tools.extend(toolset.tools.values())
-        # Fallback/Older pydantic-ai version check
-        elif self.agent and hasattr(self.agent, "_function_tools"):
-            tools.extend(self.agent._function_tools.values())
-
-        # Create new agent with tools
-        if self.output_model:
-            new_agent = Agent(
-                model_string,
-                instructions=instructions,
-                output_type=self.output_model,
-                retries=self.config.max_retries or 3,
-                tools=tools,  # Pass existing tools
-            )
-        else:
-            new_agent = Agent(
-                model_string,
-                instructions=instructions,
-                retries=self.config.max_retries or 3,
-                tools=tools,  # Pass existing tools
-            )
-
-        return new_agent
+        tools = collect_agent_tools(self.agent)
+        return create_agent_instance(
+            model_string=model_string,
+            instructions=instructions,
+            output_model=self.output_model,
+            retries=self.config.max_retries or 3,
+            tools=tools,
+        )
 
     def _build_instructions(self, context: Dict[str, Any] = None) -> Optional[str]:
         """Build system instructions from config, optionally rendering with context."""
@@ -201,7 +151,7 @@ class ChainLite:
             if context:
                 # Check if system prompt has variables before attempting render
                 # This avoids unnecessary processing if it's static
-                if self.parse_input_variables_from_prompt(system_prompt):
+                if parse_input_variables_from_prompt(system_prompt):
                     try:
                         template = jinja2.Template(system_prompt)
                         system_prompt = template.render(**context)
@@ -214,56 +164,6 @@ class ChainLite:
             return "\n\n".join(parts)
         return None
 
-    async def _process_media_item(
-        self, item: Any
-    ) -> Union[ImageUrl, BinaryContent, str]:
-        """
-        Process a media item (URL, path, or key) into a Pydantic AI compatible format.
-        """
-        if isinstance(item, (ImageUrl, BinaryContent)):
-            return item
-
-        if isinstance(item, str):
-            # 1. Base64 Check
-            if item.startswith("data:"):
-                try:
-                    header, encoded = item.split(",", 1)
-                    # header looks like "data:image/jpeg;base64"
-                    media_type = header.split(";")[0].split(":")[1]
-                    data = base64.b64decode(encoded)
-                    return BinaryContent(data=data, media_type=media_type)
-                except Exception as e:
-                    logger.warning(f"Failed to process base64 string: {e}")
-                    # Fallthrough to treating as string/url if failed?
-                    # Probably safer to return as is or error. Let's return as is.
-                    return item
-
-            # 2. Remote URL Check
-            if item.startswith(("http://", "https://")):
-                return ImageUrl(item)
-
-            # 3. Local File Check
-            if os.path.exists(item):
-                mime_type, _ = mimetypes.guess_type(item)
-                if not mime_type:
-                    mime_type = "image/jpeg"
-                try:
-
-                    def _read():
-                        with open(item, "rb") as f:
-                            return f.read()
-
-                    file_data = await asyncio.to_thread(_read)
-                    return BinaryContent(data=file_data, media_type=mime_type)
-                except Exception as e:
-                    logger.warning(f"Failed to read local file {item}: {e}")
-                    raise e
-
-            # 4. Fallback (Maybe it's just a non-existent file path or a weird URL)
-            return ImageUrl(item)
-
-        return str(item)
-
     async def _build_prompt(
         self, input_data: dict
     ) -> Union[str, list[Union[str, BinaryContent, ImageUrl]]]:
@@ -271,52 +171,10 @@ class ChainLite:
         prompt_template = self.config.prompt or "{{ input }}"
 
         try:
-            # Create a Jinja2 template and render it with the input data
-            template = jinja2.Template(prompt_template)
-            prompt_str = template.render(**input_data)
+            return await build_prompt(prompt_template, input_data)
         except Exception as e:
             logger.warning(f"Error in prompt formatting: {e}")
             raise e
-
-        content_list = [prompt_str]
-
-        # 1. Check 'images' list input
-        images = input_data.get("images")
-        if images and isinstance(images, list):
-            for img in images:
-                content_list.append(await self._process_media_item(img))
-
-        # 2. Check legacy 'image_url' input
-        image_url = input_data.get("image_url")
-        if image_url:
-            content_list.append(await self._process_media_item(image_url))
-
-        if len(content_list) > 1:
-            return content_list
-
-        return prompt_str
-
-    def _get_message_history(self) -> Optional[List[ModelMessage]]:
-        """Get message history if enabled."""
-        if self.history_manager:
-            return (
-                self.history_manager.messages if self.history_manager.messages else None
-            )
-        return None
-
-    def _update_history(
-        self, new_messages: List[ModelMessage], context: Optional[str] = None
-    ) -> None:
-        """Update message history with new messages."""
-        if self.history_manager:
-            self.history_manager.add_messages(new_messages, context=context)
-
-    async def _aupdate_history(
-        self, new_messages: List[ModelMessage], context: Optional[str] = None
-    ) -> None:
-        """Update message history asynchronously."""
-        if self.history_manager:
-            await self.history_manager.add_messages_async(new_messages, context=context)
 
     async def _prepare_run(self, input_data: dict) -> tuple[
         Union[str, list[Union[str, BinaryContent, ImageUrl]]],
@@ -333,7 +191,10 @@ class ChainLite:
             self.history_manager.system_prompt = self._get_full_system_prompt()
 
         prompt = await self._build_prompt(input_data)
-        message_history = self._get_message_history()
+        if self.history_manager and self.history_manager.messages:
+            message_history = self.history_manager.messages
+        else:
+            message_history = None
         return prompt, message_history
 
     def _process_run_result(
@@ -341,7 +202,11 @@ class ChainLite:
     ) -> Union[str, Dict[str, Any]]:
         """Process agent run result: update history and dump output."""
         if self.history_manager:
-            self._update_history(result.new_messages(), context=context)
+            self.history_manager.add_messages(
+                result.new_messages(),
+                context=context,
+                apply_truncation=self._should_apply_post_run_compaction(),
+            )
 
         output = result.output
         if isinstance(output, BaseModel):
@@ -353,7 +218,11 @@ class ChainLite:
     ) -> Union[str, Dict[str, Any]]:
         """Process agent run result asynchronously."""
         if self.history_manager:
-            await self._aupdate_history(result.new_messages(), context=context)
+            await self.history_manager.add_messages_async(
+                result.new_messages(),
+                context=context,
+                apply_truncation=self._should_apply_post_run_compaction(),
+            )
 
         output = result.output
         if isinstance(output, BaseModel):
@@ -381,13 +250,151 @@ class ChainLite:
             )
 
         # Check if system prompt needs dynamic rendering
-        if self.config.system_prompt and self.parse_input_variables_from_prompt(
+        if self.config.system_prompt and parse_input_variables_from_prompt(
             self.config.system_prompt
         ):
             instructions = self._build_instructions(input_data)
             return self._create_agent(instructions)
 
         return self.agent
+
+    def _should_apply_post_run_compaction(self) -> bool:
+        """Check if post-run compaction should be applied for this run."""
+        return self._run_count >= self._post_run_compaction_start_run
+
+    def _should_use_in_run_compaction(self) -> bool:
+        """Check if in-run compaction should be used for the current run."""
+        return (
+            self.history_manager is not None
+            and self._in_run_compaction_config is not None
+            and self._in_run_compactor is not None
+            and self._run_count >= self._in_run_compaction_config["start_run"]
+        )
+
+    async def _arun_with_in_run_compaction(
+        self, agent, prompt, message_history, model_settings, deps, context
+    ):
+        """Run agent with in-run compaction of previous tool results."""
+        from pydantic_graph import End
+
+        tool_iter_count = 0
+        in_run_task: Optional[asyncio.Task] = None
+        in_run_refresh_requested = False
+
+        def _schedule_in_run_if_needed(messages: list) -> None:
+            nonlocal in_run_task, in_run_refresh_requested
+            if in_run_task is None or in_run_task.done():
+                in_run_task = asyncio.create_task(
+                    self.history_manager.apply_in_run_compaction_to_previous_tool_results(
+                        messages,
+                        compactor=self._in_run_compactor,
+                        context=context,
+                        max_concurrency=self._in_run_compaction_config.get(
+                            "max_concurrency", 4
+                        ),
+                    )
+                )
+                in_run_refresh_requested = False
+            else:
+                # Coalesce repeated triggers while one in-run task is in flight.
+                in_run_refresh_requested = True
+
+        async with agent.iter(
+            prompt,
+            message_history=message_history,
+            model_settings=model_settings,
+            deps=deps,
+        ) as agent_run:
+            node = agent_run.next_node
+            while not isinstance(node, End):
+                if is_call_tools_node(node):
+                    tool_iter_count += 1
+                    if (
+                        tool_iter_count
+                        >= self._in_run_compaction_config["start_iter"]
+                    ):
+                        _schedule_in_run_if_needed(agent_run.all_messages())
+                node = await agent_run.next(node)
+
+                # If a pending refresh was requested while the previous task
+                # was running, immediately schedule another pass when it completes.
+                if (
+                    in_run_task is not None
+                    and in_run_task.done()
+                    and in_run_refresh_requested
+                ):
+                    _schedule_in_run_if_needed(agent_run.all_messages())
+
+            # Final synchronization: ensure outstanding in-run work is applied before
+            # returning result so history persists the latest summarized state.
+            if in_run_task is not None:
+                await in_run_task
+            if in_run_refresh_requested:
+                await self.history_manager.apply_in_run_compaction_to_previous_tool_results(
+                    agent_run.all_messages(),
+                    compactor=self._in_run_compactor,
+                    context=context,
+                    max_concurrency=self._in_run_compaction_config.get(
+                        "max_concurrency", 4
+                    ),
+                )
+
+        return agent_run.result
+
+    async def _arun_core(
+        self,
+        input_data: dict,
+        deps: Any = None,
+        *,
+        error_context: str,
+        retry_sleep_seconds: float,
+        use_async_result_processing: bool,
+    ) -> Union[str, Dict[str, Any]]:
+        """Shared async core for run/arun execution flow."""
+        prompt, message_history = await self._prepare_run(input_data)
+
+        # Get agent (potentially dynamic)
+        agent = await self._get_agent_for_run(input_data)
+        self._run_count += 1
+        input_str = input_data.get("input") or str(prompt)
+
+        max_retries = self.config.max_retries or 3
+        current_try = 0
+
+        while True:
+            try:
+                if self._should_use_in_run_compaction():
+                    result = await self._arun_with_in_run_compaction(
+                        agent,
+                        prompt,
+                        message_history,
+                        self._model_settings,
+                        deps,
+                        input_str,
+                    )
+                else:
+                    result = await agent.run(
+                        prompt,
+                        message_history=message_history,
+                        model_settings=self._model_settings,
+                        deps=deps,
+                    )
+
+                if use_async_result_processing:
+                    return await self._aprocess_run_result(result, context=input_str)
+                return self._process_run_result(result, context=input_str)
+
+            except Exception as e:
+                current_try += 1
+                self._handle_run_error(e, error_context, prompt, input_data)
+
+                if current_try >= max_retries:
+                    logger.error("Max retries reached")
+                    raise e
+
+                logger.info(f"Retrying {current_try}/{max_retries}")
+                if retry_sleep_seconds > 0:
+                    await asyncio.sleep(retry_sleep_seconds)
 
     def run(self, input_data: dict, deps: Any = None) -> Union[str, Dict[str, Any]]:
         """
@@ -400,35 +407,15 @@ class ChainLite:
         Returns:
             The response from the language model, either as string or structured data.
         """
-        prompt, message_history = asyncio.run(self._prepare_run(input_data))
-
-        # Get agent (potentially dynamic)
-        agent = asyncio.run(self._get_agent_for_run(input_data))
-
-        max_retries = self.config.max_retries or 3
-        current_try = 0
-
-        while True:
-            try:
-                result = agent.run_sync(
-                    prompt,
-                    message_history=message_history,
-                    model_settings=self._model_settings,
-                    deps=deps,
-                )
-                # Capture the prompt string for context-aware truncation
-                input_str = input_data.get("input") or str(prompt)
-                return self._process_run_result(result, context=input_str)
-
-            except Exception as e:
-                current_try += 1
-                self._handle_run_error(e, "run", prompt, input_data)
-
-                if current_try >= max_retries:
-                    logger.error("Max retries reached")
-                    raise e
-
-                logger.info(f"Retrying {current_try}/{max_retries}")
+        return asyncio.run(
+            self._arun_core(
+                input_data,
+                deps,
+                error_context="run",
+                retry_sleep_seconds=0,
+                use_async_result_processing=False,
+            )
+        )
 
     async def arun(
         self, input_data: dict, deps: Any = None
@@ -443,35 +430,13 @@ class ChainLite:
         Returns:
             The response from the language model, either as string or structured data.
         """
-        prompt, message_history = await self._prepare_run(input_data)
-
-        # Get agent (potentially dynamic)
-        agent = await self._get_agent_for_run(input_data)
-
-        max_retries = self.config.max_retries or 3
-        current_try = 0
-
-        while True:
-            try:
-                result = await agent.run(
-                    prompt,
-                    message_history=message_history,
-                    model_settings=self._model_settings,
-                    deps=deps,
-                )
-                input_str = input_data.get("input") or str(prompt)
-                return await self._aprocess_run_result(result, context=input_str)
-
-            except Exception as e:
-                current_try += 1
-                self._handle_run_error(e, "arun", prompt, input_data)
-
-                if current_try >= max_retries:
-                    logger.error("Max retries reached")
-                    raise e
-
-                logger.info(f"Retrying {current_try}/{max_retries}")
-                await asyncio.sleep(1)
+        return await self._arun_core(
+            input_data,
+            deps,
+            error_context="arun",
+            retry_sleep_seconds=1,
+            use_async_result_processing=True,
+        )
 
     def stream(self, input_data: dict, deps: Any = None) -> Generator[str, None, None]:
         """
@@ -520,7 +485,10 @@ class ChainLite:
 
         # Update history after stream completes
         if self.history_manager:
-            self._update_history(result.new_messages())
+            self.history_manager.add_messages(
+                result.new_messages(),
+                apply_truncation=self._should_apply_post_run_compaction(),
+            )
 
     async def astream(
         self, input_data: dict, deps: Any = None
@@ -567,14 +535,11 @@ class ChainLite:
             # Update history after stream completes
             if self.history_manager:
                 input_str = input_data.get("input") or str(prompt)
-                await self._aupdate_history(result.new_messages(), context=input_str)
-
-    @property
-    def chat_history_messages(self) -> Optional[List[ModelMessage]]:
-        """Get the current chat history messages."""
-        if self.history_manager:
-            return self.history_manager.messages
-        return None
+                await self.history_manager.add_messages_async(
+                    result.new_messages(),
+                    context=input_str,
+                    apply_truncation=self._should_apply_post_run_compaction(),
+                )
 
     def _get_full_system_prompt(self) -> str:
         """Extract instructions and tool definitions from the agent."""
@@ -583,118 +548,29 @@ class ChainLite:
 
         lines = []
         # 1. Instructions
-        if hasattr(self.agent, "_instructions") and self.agent._instructions:
+        instructions = get_agent_instructions(self.agent)
+        if instructions:
             lines.append("## Instructions\n")
-            for inst in self.agent._instructions:
+            for inst in instructions:
                 lines.append(f"{inst}\n")
 
         # 2. Tools
-        if (
-            hasattr(self.agent, "_function_toolset")
-            and self.agent._function_toolset.tools
-        ):
+        tool_schemas = get_agent_tool_schemas(self.agent)
+        if tool_schemas:
             if lines:
                 lines.append("\n")
             lines.append("## Tools\n")
-            for name, tool in self.agent._function_toolset.tools.items():
+            for schema_data in tool_schemas:
+                name = schema_data.get("name", "unknown")
+                description = schema_data.get("description")
                 lines.append(f"\n### Tool: {name}")
-                if tool.description:
-                    lines.append(f"**Description**: {tool.description}")
-
-                # Build a complete tool schema for audit
-                schema_data = {
-                    "name": tool.name,
-                    "description": tool.description,
-                }
-                if hasattr(tool, "function_schema"):
-                    # Use json_schema from pydantic-ai's FunctionSchema
-                    schema_data["parameters"] = getattr(
-                        tool.function_schema, "json_schema", {}
-                    )
+                if description:
+                    lines.append(f"**Description**: {description}")
 
                 lines.append("```json")
                 lines.append(json.dumps(schema_data, indent=2, ensure_ascii=False))
                 lines.append("```")
         return "\n".join(lines)
-
-    @staticmethod
-    def parse_input_variables_from_prompt(text: str) -> List[str]:
-        """Parses input variables from the prompt.
-
-        Returns:
-            A list of strings containing the input variables.
-        """
-        if not isinstance(text, str):
-            return []
-
-        env = jinja2.Environment()
-        try:
-            ast = env.parse(text)
-            input_variables = meta.find_undeclared_variables(ast)
-            return list(input_variables)
-        except Exception as e:
-            logger.error(f"Failed to parse input variables: {e}")
-            return []
-
-    @staticmethod
-    def create_dynamic_pydantic_model(data: Dict[str, Any]) -> type[BaseModel]:
-        """
-        Creates a dynamic Pydantic model from a dictionary.
-
-        Args:
-            data: The dictionary from which to create the Pydantic model.
-
-        Returns:
-            A dynamically created Pydantic model class.
-        """
-        dynamic_model_fields = {}
-        for key, value in data.items():
-            if isinstance(value, str):
-                # Define fields with description
-                dynamic_model_fields[key] = (str, Field(description=value))
-            else:
-                output_type = str
-                output_description = None
-                for v in value:
-                    if v.get("type"):
-                        output_type = ChainLite.get_type_from_string(v["type"])
-                    if v.get("description"):
-                        output_description = v["description"]
-
-                dynamic_model_fields[key] = (
-                    output_type,
-                    (
-                        Field(description=output_description)
-                        if output_description
-                        else ...
-                    ),
-                )
-
-        # Dynamically create a model based on the keys and inferred types from the dictionary
-        dynamic_model = create_model("DynamicOutput", **dynamic_model_fields)
-
-        return dynamic_model
-
-    @staticmethod
-    def get_type_from_string(type_str: str) -> Any:
-        """
-        Gets the type from a available string representation.
-        """
-        available_types = {
-            "str": str,
-            "int": int,
-            "float": float,
-            "bool": bool,
-            "Dict[str, Any]": Dict[str, Any],
-            "Dict[str, str]": Dict[str, str],
-            "List[str]": List[str],
-            "List[Dict[str, Any]]": List[Dict[str, Any]],
-        }
-        try:
-            return available_types[type_str]
-        except KeyError:
-            logger.error(f"Unknown type: {type_str}")
-            return str
 
     @staticmethod
     def load_config_from_yaml(

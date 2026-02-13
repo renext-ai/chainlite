@@ -1,6 +1,7 @@
 import pytest
 import os
 from chainlite import ChainLite, ChainLiteConfig
+from chainlite.utils.prompts import parse_input_variables_from_prompt
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -74,7 +75,7 @@ def test_parse_input_variables():
     prompt_template = (
         "Hello {{ name }}, check this {% if show_secret %}{{ secret }}{% endif %}"
     )
-    variables = ChainLite.parse_input_variables_from_prompt(prompt_template)
+    variables = parse_input_variables_from_prompt(prompt_template)
     assert "name" in variables
     assert "show_secret" in variables
     assert "secret" in variables

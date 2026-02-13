@@ -67,12 +67,12 @@ class TestDepsPassthrough(unittest.TestCase):
         self.deps = MagicMock()
 
     def test_run_passes_deps(self):
-        self.chain_lite.agent.run_sync.return_value.output = "response"
-        self.chain_lite.agent.run_sync.return_value.new_messages.return_value = []
+        self.chain_lite.agent.run.return_value.output = "response"
+        self.chain_lite.agent.run.return_value.new_messages.return_value = []
 
         self.chain_lite.run({"input": "test"}, deps=self.deps)
 
-        call_args = self.chain_lite.agent.run_sync.call_args
+        call_args = self.chain_lite.agent.run.call_args
         self.assertEqual(call_args.kwargs["deps"], self.deps)
 
     def test_arun_passes_deps(self):

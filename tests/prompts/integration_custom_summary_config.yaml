@@ -5,5 +5,5 @@ session_id: "integration_test_custom_summary"
 history_truncator_config:
   mode: "custom"
   truncation_threshold: 100
-  summarizor_config_path: "tests/custom_summarizer.yaml"
+  summarizer_config_path: "tests/custom_summarizer.yaml"
 config_name: "integration_custom_summary_config"

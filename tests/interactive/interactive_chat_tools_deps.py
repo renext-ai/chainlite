@@ -103,12 +103,11 @@ async def interactive_chat(config_path: str):
 
             print("\nAgent: ", end="", flush=True)
             try:
-                # Snapshot history length
-                history_start_index = (
-                    len(chain.chat_history_messages)
-                    if chain.chat_history_messages
-                    else 0
+                history_messages = (
+                    chain.history_manager.messages if chain.history_manager else None
                 )
+                # Snapshot history length
+                history_start_index = len(history_messages) if history_messages else 0
 
                 # Use astream for real-time output, passing deps
                 async for chunk in chain.astream(
@@ -118,8 +117,11 @@ async def interactive_chat(config_path: str):
                 print("\n")
 
                 # Inspect and print tool calls from the new history
-                if chain.chat_history_messages:
-                    new_msgs = chain.chat_history_messages[history_start_index:]
+                history_messages = (
+                    chain.history_manager.messages if chain.history_manager else None
+                )
+                if history_messages:
+                    new_msgs = history_messages[history_start_index:]
                     for msg in new_msgs:
                         if isinstance(msg, ModelResponse):
                             for part in msg.parts:

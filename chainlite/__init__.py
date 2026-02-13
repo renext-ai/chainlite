@@ -15,8 +15,16 @@ This package provides a simple interface for building LLM-powered applications
 with support for streaming, structured output, and conversation history.
 """
 
-from .core import ChainLite
 from .config import ChainLiteConfig
 from .streaming import stream_sse
 
 __all__ = ["ChainLite", "ChainLiteConfig", "stream_sse"]
+
+
+def __getattr__(name: str):
+    """Lazy-load heavy runtime dependencies for package-level imports."""
+    if name == "ChainLite":
+        from .core import ChainLite
+
+        return ChainLite
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

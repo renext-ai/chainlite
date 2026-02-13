@@ -1,0 +1,295 @@
+"""Tests for in-run compaction feature."""
+import os
+import asyncio
+from typing import Any, List
+
+from chainlite import ChainLite, ChainLiteConfig
+from pydantic_ai.messages import (
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+    TextPart,
+    ModelMessage,
+    ModelRequest,
+    UserPromptPart,
+)
+from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.settings import ModelSettings
+
+
+class MultiToolMockModel(Model):
+    """Mock model that triggers N sequential tool calls then returns a final answer."""
+
+    def __init__(self, tool_name: str, num_calls: int = 3):
+        self.tool_name = tool_name
+        self.num_calls = num_calls
+        self.call_count = 0
+
+    @property
+    def model_name(self) -> str:
+        return "mock-multi-tool"
+
+    @property
+    def system(self) -> str:
+        return "mock"
+
+    async def request(
+        self,
+        messages: List[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        self.call_count += 1
+
+        if self.call_count <= self.num_calls:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=self.tool_name,
+                        args={"step": self.call_count},
+                        tool_call_id=f"call_{self.call_count}",
+                    ),
+                ]
+            )
+        else:
+            return ModelResponse(
+                parts=[TextPart(content="All tools completed.")]
+            )
+
+
+def make_long_content(step: int) -> str:
+    """Generate tool output that exceeds the threshold."""
+    return f"STEP_{step}_START " + ("x" * 200) + f" STEP_{step}_END"
+
+
+async def test_in_run_compaction_basic():
+    """Test that in-run compaction truncates previous tool results during a run."""
+    print("\n--- Test: In-Run Compaction Basic ---")
+
+    config = ChainLiteConfig(
+        llm_model_name="openai:gpt-4o-mini",
+        use_history=True,
+        session_id="test_in_run_basic",
+        history_truncator_config={
+            "post_run_compaction": {
+                "mode": "simple",
+                "truncation_threshold": 5000,
+            },
+            "in_run_compaction": {
+                "mode": "simple",
+                "truncation_threshold": 50,
+                "start_iter": 2,
+                "start_run": 1,
+            },
+        },
+    )
+    chain = ChainLite(config)
+
+    # Register a tool that returns long content
+    @chain.agent.tool_plain
+    def big_tool(step: int) -> str:
+        """A tool that returns large content."""
+        return make_long_content(step)
+
+    # Inject mock model that calls big_tool 3 times
+    mock = MultiToolMockModel(tool_name="big_tool", num_calls=3)
+    chain.agent.model = mock
+
+    result = await chain.arun({"input": "Run all tools."})
+    print(f"Result: {result}")
+    print(f"Mock model was called {mock.call_count} times")
+
+    # Check the history messages for truncation
+    assert chain.history_manager is not None
+    raw_msgs = chain.history_manager.raw_messages
+    ctx_msgs = chain.history_manager.messages
+
+    # Count tool return parts and check truncation in the raw history
+    # (raw should be post-run processed, but the in-run mutations happen
+    # on the agent's internal messages which are then captured as new_messages)
+    tool_returns = []
+    for msg in chain.history_manager._raw_messages:
+        if isinstance(msg, ModelRequest):
+            for part in msg.parts:
+                if isinstance(part, ToolReturnPart):
+                    tool_returns.append(part)
+
+    print(f"Found {len(tool_returns)} tool returns in raw history")
+    for i, tr in enumerate(tool_returns):
+        content = tr.content
+        is_truncated = "... [Truncated due to length]" in content
+        print(f"  Tool return {i}: len={len(content)}, truncated={is_truncated}")
+
+    # The first tool result should have been truncated during the run
+    # (in-run compaction kicks in at start_iter=2, so before tool #2 executes,
+    # tool #1 result gets truncated)
+    assert len(tool_returns) == 3, f"Expected 3 tool returns, got {len(tool_returns)}"
+
+    # Tool #1 and #2 should be truncated (compacted before #2 and #3)
+    assert "... [Truncated due to length]" in tool_returns[0].content, \
+        "Tool #1 result should be truncated"
+    assert "... [Truncated due to length]" in tool_returns[1].content, \
+        "Tool #2 result should be truncated"
+
+    # Tool #3 (last) should NOT be truncated by in-run compaction
+    # (no subsequent tool call to trigger it)
+    # But it may be truncated by post-run truncation if threshold is low enough
+    # Since post-run threshold is 5000 and content is ~220 chars, it should be preserved
+    assert "STEP_3_END" in tool_returns[2].content, \
+        "Tool #3 result should still contain original content"
+
+    print("PASS: In-run compaction basic test")
+
+
+async def test_in_run_start_run_delay():
+    """Test that in-run compaction only activates after start_run threshold."""
+    print("\n--- Test: In-Run Start Run Delay ---")
+
+    config = ChainLiteConfig(
+        llm_model_name="openai:gpt-4o-mini",
+        use_history=True,
+        session_id="test_in_run_delay",
+        history_truncator_config={
+            "post_run_compaction": {
+                "mode": "simple",
+                "truncation_threshold": 5000,
+            },
+            "in_run_compaction": {
+                "mode": "simple",
+                "truncation_threshold": 50,
+                "start_iter": 2,
+                "start_run": 3,  # Only activate on 3rd run
+            },
+        },
+    )
+    chain = ChainLite(config)
+
+    @chain.agent.tool_plain
+    def big_tool(step: int) -> str:
+        """A tool that returns large content."""
+        return make_long_content(step)
+
+    # Run 1: in-run compaction should NOT be active (run_count=1 < start_run=3)
+    mock1 = MultiToolMockModel(tool_name="big_tool", num_calls=2)
+    chain.agent.model = mock1
+    await chain.arun({"input": "Run 1"})
+
+    assert chain._run_count == 1
+    print(f"Run 1 complete, run_count={chain._run_count}")
+
+    # Run 2: in-run compaction should NOT be active
+    mock2 = MultiToolMockModel(tool_name="big_tool", num_calls=2)
+    chain.agent.model = mock2
+    await chain.arun({"input": "Run 2"})
+
+    assert chain._run_count == 2
+    print(f"Run 2 complete, run_count={chain._run_count}")
+
+    # Collect tool returns from runs 1-2 (should NOT be in-run truncated)
+    tool_returns_before = []
+    for msg in chain.history_manager._raw_messages:
+        if isinstance(msg, ModelRequest):
+            for part in msg.parts:
+                if isinstance(part, ToolReturnPart):
+                    tool_returns_before.append(part)
+
+    for i, tr in enumerate(tool_returns_before):
+        # None should be in-run truncated (post-run truncation threshold is 5000, content ~220)
+        assert "... [Truncated due to length]" not in tr.content, \
+            f"Tool return {i} should NOT be truncated before start_run threshold"
+
+    print("Runs 1-2: no in-run truncation (correct)")
+
+    # Run 3: in-run compaction SHOULD be active (run_count=3 >= start_run=3)
+    chain.history_manager.clear()  # Clear history to isolate test
+    mock3 = MultiToolMockModel(tool_name="big_tool", num_calls=3)
+    chain.agent.model = mock3
+    await chain.arun({"input": "Run 3"})
+
+    assert chain._run_count == 3
+    print(f"Run 3 complete, run_count={chain._run_count}")
+
+    tool_returns_after = []
+    for msg in chain.history_manager._raw_messages:
+        if isinstance(msg, ModelRequest):
+            for part in msg.parts:
+                if isinstance(part, ToolReturnPart):
+                    tool_returns_after.append(part)
+
+    # Now tool #1 should be truncated by in-run compaction
+    assert len(tool_returns_after) == 3
+    assert "... [Truncated due to length]" in tool_returns_after[0].content, \
+        "Tool #1 should be in-run truncated in run 3"
+
+    print("Run 3: in-run truncation active (correct)")
+    print("PASS: In-run start_run delay test")
+
+
+async def test_in_run_start_iter_delay():
+    """Test that in-run compaction respects start_iter within a single run."""
+    print("\n--- Test: In-Run Start Iter Delay ---")
+
+    config = ChainLiteConfig(
+        llm_model_name="openai:gpt-4o-mini",
+        use_history=True,
+        session_id="test_in_run_iter",
+        history_truncator_config={
+            "post_run_compaction": {
+                "mode": "simple",
+                "truncation_threshold": 5000,
+            },
+            "in_run_compaction": {
+                "mode": "simple",
+                "truncation_threshold": 50,
+                "start_iter": 3,  # Only start at 3rd tool iteration
+                "start_run": 1,
+            },
+        },
+    )
+    chain = ChainLite(config)
+
+    @chain.agent.tool_plain
+    def big_tool(step: int) -> str:
+        """A tool that returns large content."""
+        return make_long_content(step)
+
+    mock = MultiToolMockModel(tool_name="big_tool", num_calls=4)
+    chain.agent.model = mock
+    await chain.arun({"input": "Run tools"})
+
+    tool_returns = []
+    for msg in chain.history_manager._raw_messages:
+        if isinstance(msg, ModelRequest):
+            for part in msg.parts:
+                if isinstance(part, ToolReturnPart):
+                    tool_returns.append(part)
+
+    assert len(tool_returns) == 4
+    for i, tr in enumerate(tool_returns):
+        is_truncated = "... [Truncated due to length]" in tr.content
+        print(f"  Tool return {i}: truncated={is_truncated}")
+
+    # start_iter=3 means:
+    # - iter 1 (tool #1): no compaction (iter_count=1 < 3)
+    # - iter 2 (tool #2): no compaction (iter_count=2 < 3)
+    # - iter 3 (tool #3): compaction kicks in, truncate tool #1 and #2
+    # - iter 4 (tool #4): compaction, truncate tool #1, #2, #3
+    # Tool #1 and #2 should be truncated
+    assert "... [Truncated due to length]" in tool_returns[0].content
+    assert "... [Truncated due to length]" in tool_returns[1].content
+    # Tool #3 should also be truncated (truncated before tool #4)
+    assert "... [Truncated due to length]" in tool_returns[2].content
+    # Tool #4 (last) should NOT be truncated
+    assert "STEP_4_END" in tool_returns[3].content
+
+    print("PASS: In-run start_iter delay test")
+
+
+if __name__ == "__main__":
+    if not os.getenv("OPENAI_API_KEY"):
+        os.environ["OPENAI_API_KEY"] = "dummy"
+
+    asyncio.run(test_in_run_compaction_basic())
+    asyncio.run(test_in_run_start_run_delay())
+    asyncio.run(test_in_run_start_iter_delay())
+    print("\n=== All in-run compaction tests passed ===")
