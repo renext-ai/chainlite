@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0](https://github.com/renext-ai/chainlite/compare/chainlite-v0.5.1...chainlite-v0.6.0) (2026-02-13)
+
+
+### Features
+
+* **core:** add real-time in-run compaction for stream/astream ([b95e61b](https://github.com/renext-ai/chainlite/commit/b95e61b0a53d351a965c2f1480ad688cc0e2b685))
+
 ## [0.5.1](https://github.com/renext-ai/chainlite/compare/chainlite-v0.5.0...chainlite-v0.5.1) (2026-02-13)
 
 
