@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1](https://github.com/renext-ai/chainlite/compare/chainlite-v0.5.0...chainlite-v0.5.1) (2026-02-13)
+
+
+### Bug Fixes
+
+* **core:** ensure stream/astream increment run_count and pass context for truncation ([452aec3](https://github.com/renext-ai/chainlite/commit/452aec3c43756c78ff91d6ca957b4b1b3875c673))
+* **core:** ensure stream/astream increment run_count and pass context… ([70ee73d](https://github.com/renext-ai/chainlite/commit/70ee73d9a2b06efb88169e3ff5d6a8c0102df2a3))
+
 ## [0.5.0](https://github.com/renext-ai/chainlite/compare/chainlite-v0.4.1...chainlite-v0.5.0) (2026-02-13)
 
 
