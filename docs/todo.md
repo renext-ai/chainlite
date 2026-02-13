@@ -59,7 +59,7 @@ run()
 當訊息進到
 HistoryManager
 時，Truncator（如
-AutoSummarizor
+AutoSummarizer
 ）會遍歷這次進來的所有新訊息：
 
 它會針對每一個 ToolReturnPart（工具回傳的部分）單獨檢查。

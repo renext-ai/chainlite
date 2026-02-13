@@ -12,21 +12,41 @@ class _BaseCompactionConfig(BaseModel):
 
     mode: Optional[CompactionMode] = None
     truncation_threshold: int = 5000
-    summarizor_config_path: Optional[str] = None
-    summarizor_config_dict: Optional[Dict[str, Any]] = None
+    summarizer_config_path: Optional[str] = None
+    summarizer_config_dict: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_summarizer_keys(cls, data: Any):
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        if (
+            "summarizer_config_path" not in normalized
+            and "summarizor_config_path" in normalized
+        ):
+            normalized["summarizer_config_path"] = normalized["summarizor_config_path"]
+        if (
+            "summarizer_config_dict" not in normalized
+            and "summarizor_config_dict" in normalized
+        ):
+            normalized["summarizer_config_dict"] = normalized["summarizor_config_dict"]
+        normalized.pop("summarizor_config_path", None)
+        normalized.pop("summarizor_config_dict", None)
+        return normalized
 
     @model_validator(mode="after")
-    def _validate_custom_summarizor_source(self):
+    def _validate_custom_summarizer_source(self):
         if self.mode != "custom":
             return self
 
-        if self.summarizor_config_path and self.summarizor_config_dict:
+        if self.summarizer_config_path and self.summarizer_config_dict:
             raise ValueError(
-                "Cannot specify both 'summarizor_config_path' and 'summarizor_config_dict'"
+                "Cannot specify both 'summarizer_config_path' and 'summarizer_config_dict'"
             )
-        if not self.summarizor_config_path and not self.summarizor_config_dict:
+        if not self.summarizer_config_path and not self.summarizer_config_dict:
             raise ValueError(
-                "Must specify either 'summarizor_config_path' or 'summarizor_config_dict' for custom compaction"
+                "Must specify either 'summarizer_config_path' or 'summarizer_config_dict' for custom compaction"
             )
         return self
 
@@ -90,9 +110,16 @@ class HistoryTruncatorConfig(BaseModel):
             "mode",
             "truncation_threshold",
             "start_run",
-            "summarizor_config_path",
-            "summarizor_config_dict",
+            "summarizer_config_path",
+            "summarizer_config_dict",
         }
+        legacy_post_key_map = {
+            "summarizor_config_path": "summarizer_config_path",
+            "summarizor_config_dict": "summarizer_config_dict",
+        }
+        for legacy_key, new_key in legacy_post_key_map.items():
+            if new_key not in normalized and legacy_key in normalized:
+                normalized[new_key] = normalized[legacy_key]
         has_flat_post = any(key in normalized for key in root_post_keys)
         if "post_run_compaction" not in normalized and has_flat_post:
             normalized["post_run_compaction"] = {
@@ -105,6 +132,8 @@ class HistoryTruncatorConfig(BaseModel):
             normalized["in_run_compaction"] = normalized["lazy_summarization"]
 
         for key in root_post_keys:
+            normalized.pop(key, None)
+        for key in legacy_post_key_map:
             normalized.pop(key, None)
         normalized.pop("lazy_summarization", None)
         return normalized

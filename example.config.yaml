@@ -70,8 +70,8 @@ llm_model_name: "openai:gpt-4"
 #     truncation_threshold: 5000
 #     start_run: 1                    # begin post-run compaction from Nth run
 #     # For "custom" mode:
-#     # summarizor_config_path: "path/to/summarizer.yaml"
-#     # summarizor_config_dict: {}
+#     # summarizer_config_path: "path/to/summarizer.yaml"
+#     # summarizer_config_dict: {}
 #
 #   # (Optional) In-run compaction.
 #   # When enabled, during a single agent.run() with multiple tool calls,

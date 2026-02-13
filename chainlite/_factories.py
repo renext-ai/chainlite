@@ -21,7 +21,7 @@ def build_compaction_components(config: Any) -> tuple[Any, int, Optional[dict[st
     if not config.history_truncator_config:
         return truncator, post_run_compaction_start_run, in_run_compaction_config, in_run_compactor
 
-    from .truncators import SimpleTruncator, AutoSummarizor, ChainLiteSummarizor
+    from .truncators import SimpleTruncator, AutoSummarizer, ChainLiteSummarizer
 
     t_config = config.history_truncator_config
     post_cfg = t_config.post_run_compaction
@@ -35,15 +35,15 @@ def build_compaction_components(config: Any) -> tuple[Any, int, Optional[dict[st
         if mode == "simple":
             truncator = SimpleTruncator(threshold=threshold)
         elif mode == "auto":
-            truncator = AutoSummarizor(
+            truncator = AutoSummarizer(
                 threshold=threshold,
                 model_name=config.llm_model_name,
             )
         elif mode == "custom":
-            truncator = ChainLiteSummarizor(
+            truncator = ChainLiteSummarizer(
                 config_or_path=(
-                    post_cfg.summarizor_config_path
-                    or post_cfg.summarizor_config_dict
+                    post_cfg.summarizer_config_path
+                    or post_cfg.summarizer_config_dict
                 ),
                 threshold=threshold,
             )
@@ -61,15 +61,15 @@ def build_compaction_components(config: Any) -> tuple[Any, int, Optional[dict[st
         if in_run_mode == "simple":
             in_run_compactor = SimpleTruncator(threshold=in_run_threshold)
         elif in_run_mode == "auto":
-            in_run_compactor = AutoSummarizor(
+            in_run_compactor = AutoSummarizer(
                 threshold=in_run_threshold,
                 model_name=config.llm_model_name,
             )
         elif in_run_mode == "custom":
-            in_run_compactor = ChainLiteSummarizor(
+            in_run_compactor = ChainLiteSummarizer(
                 config_or_path=(
-                    in_run_cfg.summarizor_config_path
-                    or in_run_cfg.summarizor_config_dict
+                    in_run_cfg.summarizer_config_path
+                    or in_run_cfg.summarizer_config_dict
                 ),
                 threshold=in_run_threshold,
             )

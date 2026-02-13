@@ -144,7 +144,7 @@ class SimpleTruncator(BaseHistoryTruncator):
         return self._process_messages(messages)
 
 
-class AutoSummarizor(BaseHistoryTruncator):
+class AutoSummarizer(BaseHistoryTruncator):
     """Implicitly uses a specified agent (defaults to primary) to summarize tool results."""
 
     def __init__(
@@ -264,7 +264,7 @@ class AutoSummarizor(BaseHistoryTruncator):
         return new_messages
 
 
-class ChainLiteSummarizor(BaseHistoryTruncator):
+class ChainLiteSummarizer(BaseHistoryTruncator):
     """Recursive ChainLite summarizer."""
 
     def __init__(
@@ -370,3 +370,8 @@ class ChainLiteSummarizor(BaseHistoryTruncator):
             else:
                 new_messages.append(msg)
         return new_messages
+
+
+# Backward-compatible aliases for earlier misspelled public names.
+AutoSummarizor = AutoSummarizer
+ChainLiteSummarizor = ChainLiteSummarizer

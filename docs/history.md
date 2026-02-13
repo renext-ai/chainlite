@@ -60,11 +60,11 @@ history_truncator_config:
   post_run_compaction:
     mode: "custom"
     truncation_threshold: 5000
-    summarizor_config_path: "tests/prompts/custom_summarizer.yaml"
+    summarizer_config_path: "tests/prompts/custom_summarizer.yaml"
   # OR
   # post_run_compaction:
   #   mode: "custom"
-  #   summarizor_config_dict:
+  #   summarizer_config_dict:
   #     llm_model_name: "openai:gpt-3.5-turbo"
   #     system_prompt: "Summarize this concisely."
 ```

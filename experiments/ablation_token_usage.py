@@ -487,19 +487,19 @@ async def run_experiment(
 
 
 def _get_summarizer_stats(chain: ChainLite) -> dict:
-    """Extract summarizer token usage from truncator(s) if they are AutoSummarizor."""
-    from chainlite.truncators import AutoSummarizor
+    """Extract summarizer token usage from truncator(s) if they are AutoSummarizer."""
+    from chainlite.truncators import AutoSummarizer
 
     stats = {"input_tokens": 0, "output_tokens": 0, "calls": 0}
 
     # Check post-run truncator
-    if isinstance(chain._truncator, AutoSummarizor):
+    if isinstance(chain._truncator, AutoSummarizer):
         stats["input_tokens"] += chain._truncator.summarizer_input_tokens
         stats["output_tokens"] += chain._truncator.summarizer_output_tokens
         stats["calls"] += chain._truncator.summarizer_calls
 
     # Check in-run compactor
-    if isinstance(chain._in_run_compactor, AutoSummarizor):
+    if isinstance(chain._in_run_compactor, AutoSummarizer):
         stats["input_tokens"] += chain._in_run_compactor.summarizer_input_tokens
         stats["output_tokens"] += chain._in_run_compactor.summarizer_output_tokens
         stats["calls"] += chain._in_run_compactor.summarizer_calls
