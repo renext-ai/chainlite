@@ -181,7 +181,7 @@ This project uses [Pixi](https://prefix.dev/docs/pixi/overview) for dependency m
    You can run python scripts directly using `pixi run`:
 
    ```bash
-   pixi run python tests/interactive_chat.py --config tests/chat_agent.yaml
+   pixi run python tests/interactive/interactive_chat.py --config tests/prompts/chat_agent.yaml
    ```
 
    Or spawn a shell with the environment activated:

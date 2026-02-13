@@ -8,6 +8,8 @@ from loguru import logger
 from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings
 
+from .adapters.pydantic_ai import get_agent_tools
+
 
 def build_compaction_components(config: Any) -> tuple[Any, int, Optional[dict[str, Any]], Any]:
     """Build post-run and in-run compaction components from config."""
@@ -128,13 +130,4 @@ def create_agent_instance(
 
 def collect_agent_tools(agent: Optional[Agent]) -> list[Any]:
     """Collect registered tools from a pydantic-ai agent (version-compatible)."""
-    tools: list[Any] = []
-
-    if agent and hasattr(agent, "_function_toolset"):
-        toolset = agent._function_toolset
-        if hasattr(toolset, "tools"):
-            tools.extend(toolset.tools.values())
-    elif agent and hasattr(agent, "_function_tools"):
-        tools.extend(agent._function_tools.values())
-
-    return tools
+    return get_agent_tools(agent)

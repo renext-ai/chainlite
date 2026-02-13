@@ -34,6 +34,11 @@ from .utils.output_model import (
     merge_dictionaries,
 )
 from .utils.prompts import parse_input_variables_from_prompt
+from .adapters.pydantic_ai import (
+    get_agent_instructions,
+    get_agent_tools,
+    is_call_tools_node,
+)
 
 
 class ChainLite:
@@ -270,7 +275,6 @@ class ChainLite:
         self, agent, prompt, message_history, model_settings, deps, context
     ):
         """Run agent with in-run compaction of previous tool results."""
-        from pydantic_ai.agent import CallToolsNode
         from pydantic_graph import End
 
         tool_iter_count = 0
@@ -303,7 +307,7 @@ class ChainLite:
         ) as agent_run:
             node = agent_run.next_node
             while not isinstance(node, End):
-                if isinstance(node, CallToolsNode):
+                if is_call_tools_node(node):
                     tool_iter_count += 1
                     if (
                         tool_iter_count
@@ -544,28 +548,29 @@ class ChainLite:
 
         lines = []
         # 1. Instructions
-        if hasattr(self.agent, "_instructions") and self.agent._instructions:
+        instructions = get_agent_instructions(self.agent)
+        if instructions:
             lines.append("## Instructions\n")
-            for inst in self.agent._instructions:
+            for inst in instructions:
                 lines.append(f"{inst}\n")
 
         # 2. Tools
-        if (
-            hasattr(self.agent, "_function_toolset")
-            and self.agent._function_toolset.tools
-        ):
+        tools = get_agent_tools(self.agent)
+        if tools:
             if lines:
                 lines.append("\n")
             lines.append("## Tools\n")
-            for name, tool in self.agent._function_toolset.tools.items():
+            for tool in tools:
+                name = getattr(tool, "name", "unknown")
                 lines.append(f"\n### Tool: {name}")
-                if tool.description:
-                    lines.append(f"**Description**: {tool.description}")
+                description = getattr(tool, "description", None)
+                if description:
+                    lines.append(f"**Description**: {description}")
 
                 # Build a complete tool schema for audit
                 schema_data = {
-                    "name": tool.name,
-                    "description": tool.description,
+                    "name": name,
+                    "description": description,
                 }
                 if hasattr(tool, "function_schema"):
                     # Use json_schema from pydantic-ai's FunctionSchema
