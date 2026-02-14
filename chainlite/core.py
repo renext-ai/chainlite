@@ -223,7 +223,10 @@ class ChainLite:
         return prompt, message_history
 
     def _process_run_result(
-        self, result: Any, context: Optional[str] = None
+        self,
+        result: Any,
+        context: Optional[str] = None,
+        raw_messages: Optional[List[ModelMessage]] = None,
     ) -> Union[str, Dict[str, Any]]:
         """Process agent run result: update history and dump output."""
         self._sync_compaction_manager()
@@ -234,6 +237,7 @@ class ChainLite:
                 apply_truncation=self.compaction_manager.should_apply_post_run(
                     self._run_count
                 ),
+                raw_messages=raw_messages,
             )
 
         output = result.output
@@ -242,7 +246,10 @@ class ChainLite:
         return output
 
     async def _aprocess_run_result(
-        self, result: Any, context: Optional[str] = None
+        self,
+        result: Any,
+        context: Optional[str] = None,
+        raw_messages: Optional[List[ModelMessage]] = None,
     ) -> Union[str, Dict[str, Any]]:
         """Process agent run result asynchronously."""
         self._sync_compaction_manager()
@@ -253,6 +260,7 @@ class ChainLite:
                 apply_truncation=self.compaction_manager.should_apply_post_run(
                     self._run_count
                 ),
+                raw_messages=raw_messages,
             )
 
         output = result.output
@@ -296,7 +304,10 @@ class ChainLite:
         from pydantic_graph import End
 
         self._sync_compaction_manager()
-        task_manager = self.compaction_manager.build_task_manager(context)
+        raw_snapshot: dict[str, str] = {}
+        task_manager = self.compaction_manager.build_task_manager(
+            context, raw_snapshot=raw_snapshot
+        )
 
         async with agent.iter(
             prompt,
@@ -316,7 +327,11 @@ class ChainLite:
             # returning result so history persists the latest summarized state.
             await task_manager.flush(agent_run.all_messages())
 
-        return agent_run.result
+        raw_messages = self.compaction_manager.restore_raw_messages_from_snapshot(
+            agent_run.result.new_messages(),
+            raw_snapshot,
+        )
+        return agent_run.result, raw_messages
 
     async def _astream_with_in_run_compaction(
         self, agent, prompt, message_history, deps, context
@@ -327,7 +342,10 @@ class ChainLite:
         self._sync_compaction_manager()
         processor = StreamProcessor()
 
-        task_manager = self.compaction_manager.build_task_manager(context)
+        raw_snapshot: dict[str, str] = {}
+        task_manager = self.compaction_manager.build_task_manager(
+            context, raw_snapshot=raw_snapshot
+        )
 
         async with agent.iter(
             prompt,
@@ -356,12 +374,17 @@ class ChainLite:
                 yield chunk
 
             if self.history_manager and agent_run.result is not None:
+                raw_messages = self.compaction_manager.restore_raw_messages_from_snapshot(
+                    agent_run.result.new_messages(),
+                    raw_snapshot,
+                )
                 await self.history_manager.add_messages_async(
                     agent_run.result.new_messages(),
                     context=context,
                     apply_truncation=self.compaction_manager.should_apply_post_run(
                         self._run_count
                     ),
+                    raw_messages=raw_messages,
                 )
 
     def _build_stream_runner(self, agent: Agent) -> StreamRunner:
@@ -404,8 +427,9 @@ class ChainLite:
 
         while True:
             try:
+                raw_messages_override = None
                 if self.compaction_manager.should_use_in_run(self._run_count):
-                    result = await self._arun_with_in_run_compaction(
+                    result, raw_messages_override = await self._arun_with_in_run_compaction(
                         agent,
                         prompt,
                         message_history,
@@ -422,8 +446,16 @@ class ChainLite:
                     )
 
                 if use_async_result_processing:
-                    return await self._aprocess_run_result(result, context=input_str)
-                return self._process_run_result(result, context=input_str)
+                    return await self._aprocess_run_result(
+                        result,
+                        context=input_str,
+                        raw_messages=raw_messages_override,
+                    )
+                return self._process_run_result(
+                    result,
+                    context=input_str,
+                    raw_messages=raw_messages_override,
+                )
 
             except Exception as e:
                 current_try += 1

@@ -134,9 +134,11 @@ class HistoryManager:
         messages: List[ModelMessage],
         context: Optional[str] = None,
         apply_truncation: bool = True,
+        raw_messages: Optional[List[ModelMessage]] = None,
     ) -> None:
         """Add new messages to history (Synchronous)."""
-        self._raw_messages.extend(copy.deepcopy(messages))
+        raw_to_store = raw_messages if raw_messages is not None else messages
+        self._raw_messages.extend(copy.deepcopy(raw_to_store))
         if self.truncator and apply_truncation:
             processed_messages = self.truncator.truncate(messages, context=context)
             self._messages.extend(processed_messages)
@@ -152,9 +154,11 @@ class HistoryManager:
         messages: List[ModelMessage],
         context: Optional[str] = None,
         apply_truncation: bool = True,
+        raw_messages: Optional[List[ModelMessage]] = None,
     ) -> None:
         """Add new messages to history (Asynchronous)."""
-        self._raw_messages.extend(copy.deepcopy(messages))
+        raw_to_store = raw_messages if raw_messages is not None else messages
+        self._raw_messages.extend(copy.deepcopy(raw_to_store))
         if self.truncator and apply_truncation:
             processed_messages = await self.truncator.atruncate(
                 messages, context=context

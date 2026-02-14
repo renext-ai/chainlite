@@ -1,5 +1,6 @@
 import asyncio
-from typing import Awaitable, Callable, List, Optional
+import copy
+from typing import Awaitable, Callable, Dict, List, Optional
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 
@@ -89,10 +90,58 @@ class CompactionManager:
     def _should_include_latest_for_in_run(self) -> bool:
         return self.config is not None and int(self.config.get("start_iter", 2)) <= 1
 
+    @staticmethod
+    def _tool_part_key(part: ToolReturnPart) -> str:
+        if part.tool_call_id:
+            return f"id:{part.tool_call_id}"
+        timestamp = part.timestamp.isoformat() if part.timestamp else ""
+        return f"fallback:{part.tool_name}|{timestamp}"
+
+    def _capture_raw_tool_results(
+        self,
+        messages: List[ModelMessage],
+        raw_snapshot: Dict[str, str],
+    ) -> None:
+        """Capture original tool results before they are compacted in-place."""
+        if self.compactor is None:
+            return
+        threshold = getattr(self.compactor, "threshold", 0)
+        for msg in messages:
+            if not isinstance(msg, ModelRequest):
+                continue
+            for part in msg.parts:
+                if (
+                    isinstance(part, ToolReturnPart)
+                    and isinstance(part.content, str)
+                    and len(part.content) > threshold
+                ):
+                    key = self._tool_part_key(part)
+                    raw_snapshot.setdefault(key, part.content)
+
+    def restore_raw_messages_from_snapshot(
+        self,
+        messages: List[ModelMessage],
+        raw_snapshot: Dict[str, str],
+    ) -> List[ModelMessage]:
+        """Restore compacted tool parts back to original raw content for audit logs."""
+        restored = copy.deepcopy(messages)
+        for msg in restored:
+            if not isinstance(msg, ModelRequest):
+                continue
+            for part in msg.parts:
+                if not isinstance(part, ToolReturnPart):
+                    continue
+                key = self._tool_part_key(part)
+                original_content = raw_snapshot.get(key)
+                if original_content is not None:
+                    part.content = original_content
+        return restored
+
     async def run_in_run_compaction(
         self,
         messages: List[ModelMessage],
         context: Optional[str],
+        raw_snapshot: Optional[Dict[str, str]] = None,
     ) -> None:
         if (
             self.history_manager is None
@@ -100,6 +149,9 @@ class CompactionManager:
             or self.compactor is None
         ):
             return
+
+        if raw_snapshot is not None:
+            self._capture_raw_tool_results(messages, raw_snapshot)
 
         await self.history_manager.apply_in_run_compaction_to_previous_tool_results(
             messages,
@@ -109,12 +161,14 @@ class CompactionManager:
             include_latest_tool_block=self._should_include_latest_for_in_run(),
         )
 
-    def build_task_manager(self, context: Optional[str]) -> InRunCompactionTaskManager:
+    def build_task_manager(
+        self, context: Optional[str], raw_snapshot: Optional[Dict[str, str]] = None
+    ) -> InRunCompactionTaskManager:
         if self.config is None:
             raise ValueError("In-run compaction config is not available")
 
         async def _apply_in_run_compaction(messages: List[ModelMessage]) -> None:
-            await self.run_in_run_compaction(messages, context)
+            await self.run_in_run_compaction(messages, context, raw_snapshot=raw_snapshot)
 
         return InRunCompactionTaskManager(
             start_iter=self.config["start_iter"],
@@ -126,6 +180,7 @@ class CompactionManager:
         messages: List[ModelMessage],
         context: Optional[str],
         run_count: int,
+        raw_snapshot: Optional[Dict[str, str]] = None,
     ) -> None:
         if not self.should_use_in_run(run_count):
             return
@@ -137,4 +192,4 @@ class CompactionManager:
         if tool_blocks < self.config["start_iter"]:
             return
 
-        await self.run_in_run_compaction(messages, context)
+        await self.run_in_run_compaction(messages, context, raw_snapshot=raw_snapshot)
