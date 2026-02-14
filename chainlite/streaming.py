@@ -8,7 +8,15 @@ import asyncio
 import json
 import logging
 import traceback
-from typing import Any, AsyncGenerator, Generator, TYPE_CHECKING
+from typing import (
+    Any,
+    AsyncGenerator,
+    Awaitable,
+    Callable,
+    Generator,
+    Optional,
+    TYPE_CHECKING,
+)
 
 if TYPE_CHECKING:
     from .core import ChainLite
@@ -119,3 +127,155 @@ class StreamProcessor:
         if self.active_tag:
             yield f"</{self.active_tag}>"
             self.active_tag = None
+
+
+class StreamRunner:
+    """Orchestrate sync/async streaming with StreamProcessor."""
+
+    def __init__(
+        self,
+        *,
+        agent: Any,
+        model_settings: Any,
+        history_manager: Optional[Any],
+        should_apply_post_run_compaction: Callable[[], bool],
+        apply_stream_in_run_compaction_if_needed: Callable[
+            [list[Any], Optional[str]], Awaitable[None]
+        ],
+    ) -> None:
+        self._agent = agent
+        self._model_settings = model_settings
+        self._history_manager = history_manager
+        self._should_apply_post_run_compaction = should_apply_post_run_compaction
+        self._apply_stream_in_run_compaction_if_needed = (
+            apply_stream_in_run_compaction_if_needed
+        )
+
+    def _iter_processor_chunks_sync(self, result: Any) -> Generator[str, None, None]:
+        processor = StreamProcessor()
+
+        if hasattr(result, "stream_responses"):
+            for message in result.stream_responses():
+                if isinstance(message, tuple):
+                    message = message[0]
+                for chunk in processor.process_message(message):
+                    yield chunk
+        elif hasattr(result, "stream_structured"):
+            for message in result.stream_structured():
+                if isinstance(message, tuple):
+                    message = message[0]
+                for chunk in processor.process_message(message):
+                    yield chunk
+        else:
+            for chunk in result.stream_text(delta=True):
+                yield chunk
+
+        for chunk in processor.close():
+            yield chunk
+
+    async def _iter_processor_chunks_async(
+        self, result: Any
+    ) -> AsyncGenerator[str, None]:
+        processor = StreamProcessor()
+
+        if hasattr(result, "stream_responses"):
+            async for message in result.stream_responses():
+                if isinstance(message, tuple):
+                    message = message[0]
+                for chunk in processor.process_message(message):
+                    yield chunk
+        elif hasattr(result, "stream_structured"):
+            async for message in result.stream_structured():
+                if isinstance(message, tuple):
+                    message = message[0]
+                for chunk in processor.process_message(message):
+                    yield chunk
+        else:
+            async for chunk in result.stream_text(delta=True):
+                yield chunk
+
+        for chunk in processor.close():
+            yield chunk
+
+    def _persist_history_sync(self, result: Any, context: Optional[str]) -> None:
+        if not self._history_manager:
+            return
+
+        new_messages = result.new_messages()
+        asyncio.run(self._apply_stream_in_run_compaction_if_needed(new_messages, context))
+        self._history_manager.add_messages(
+            new_messages,
+            context=context,
+            apply_truncation=self._should_apply_post_run_compaction(),
+        )
+
+    async def _persist_history_async(self, result: Any, context: Optional[str]) -> None:
+        if not self._history_manager:
+            return
+
+        new_messages = result.new_messages()
+        await self._apply_stream_in_run_compaction_if_needed(new_messages, context)
+        await self._history_manager.add_messages_async(
+            new_messages,
+            context=context,
+            apply_truncation=self._should_apply_post_run_compaction(),
+        )
+
+    def stream_sync(
+        self,
+        prompt: Any,
+        message_history: Optional[list[Any]],
+        deps: Any,
+        context: Optional[str],
+    ) -> Generator[str, None, None]:
+        result = self._agent.run_stream_sync(
+            prompt,
+            message_history=message_history,
+            model_settings=self._model_settings,
+            deps=deps,
+        )
+        for chunk in self._iter_processor_chunks_sync(result):
+            yield chunk
+        self._persist_history_sync(result, context)
+
+    async def stream_async(
+        self,
+        prompt: Any,
+        message_history: Optional[list[Any]],
+        deps: Any,
+        context: Optional[str],
+    ) -> AsyncGenerator[str, None]:
+        async with self._agent.run_stream(
+            prompt,
+            message_history=message_history,
+            model_settings=self._model_settings,
+            deps=deps,
+        ) as result:
+            async for chunk in self._iter_processor_chunks_async(result):
+                yield chunk
+            await self._persist_history_async(result, context)
+
+    def stream_sync_from_async_generator(
+        self, async_gen: AsyncGenerator[str, None]
+    ) -> Generator[str, None, None]:
+        loop = asyncio.new_event_loop()
+        old_loop = None
+        try:
+            try:
+                old_loop = asyncio.get_event_loop()
+            except RuntimeError:
+                old_loop = None
+            asyncio.set_event_loop(loop)
+            while True:
+                try:
+                    chunk = loop.run_until_complete(async_gen.__anext__())
+                except StopAsyncIteration:
+                    break
+                yield chunk
+        finally:
+            try:
+                loop.run_until_complete(async_gen.aclose())
+            except Exception:
+                pass
+            loop.close()
+            asyncio.set_event_loop(old_loop)
