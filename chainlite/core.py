@@ -309,6 +309,7 @@ class ChainLite:
 
         compaction_manager = self._require_compaction_manager()
         raw_snapshot: dict[str, str] = {}
+        run_start_idx = len(message_history) if message_history else 0
         task_manager = compaction_manager.build_task_manager(
             context, raw_snapshot=raw_snapshot
         )
@@ -324,12 +325,12 @@ class ChainLite:
                 was_call_tools = is_call_tools_node(node)
                 node = await agent_run.next(node)
                 if was_call_tools:
-                    task_manager.on_tool_iteration(agent_run.all_messages())
-                task_manager.on_progress(agent_run.all_messages())
+                    task_manager.on_tool_iteration(agent_run.all_messages()[run_start_idx:])
+                task_manager.on_progress(agent_run.all_messages()[run_start_idx:])
 
             # Final synchronization: ensure outstanding in-run work is applied before
             # returning result so history persists the latest summarized state.
-            await task_manager.flush(agent_run.all_messages())
+            await task_manager.flush(agent_run.all_messages()[run_start_idx:])
 
         raw_messages = compaction_manager.restore_raw_messages_from_snapshot(
             agent_run.result.new_messages(),
@@ -347,6 +348,7 @@ class ChainLite:
         processor = StreamProcessor()
 
         raw_snapshot: dict[str, str] = {}
+        run_start_idx = len(message_history) if message_history else 0
         task_manager = compaction_manager.build_task_manager(
             context, raw_snapshot=raw_snapshot
         )
@@ -369,10 +371,10 @@ class ChainLite:
 
                 node = await agent_run.next(node)
                 if was_call_tools:
-                    task_manager.on_tool_iteration(agent_run.all_messages())
-                task_manager.on_progress(agent_run.all_messages())
+                    task_manager.on_tool_iteration(agent_run.all_messages()[run_start_idx:])
+                task_manager.on_progress(agent_run.all_messages()[run_start_idx:])
 
-            await task_manager.flush(agent_run.all_messages())
+            await task_manager.flush(agent_run.all_messages()[run_start_idx:])
 
             for chunk in processor.close():
                 yield chunk

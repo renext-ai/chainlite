@@ -382,6 +382,50 @@ async def test_in_run_compaction_keeps_raw_audit_unmodified():
     assert "... [Truncated due to length]" in ctx_tool_returns[0].content
 
 
+async def test_in_run_compaction_does_not_touch_previous_runs():
+    """In-run compaction should only process tool outputs created in the current run."""
+    config = ChainLiteConfig(
+        llm_model_name="openai:gpt-4o-mini",
+        use_history=True,
+        session_id="test_in_run_scope_current_run_only",
+        history_truncator_config={
+            "post_run_compaction": {
+                "mode": "simple",
+                "truncation_threshold": 5000,
+            },
+            "in_run_compaction": {
+                "mode": "simple",
+                "truncation_threshold": 50,
+                "start_iter": 2,
+                "start_run": 1,
+            },
+        },
+    )
+    chain = ChainLite(config)
+
+    @chain.agent.tool_plain
+    def big_tool(step: int) -> str:
+        return make_long_content(step)
+
+    # Run 1: one tool call. start_iter=2 means this should remain un-compacted.
+    mock_run1 = MultiToolMockModel(tool_name="big_tool", num_calls=1)
+    chain.agent.model = mock_run1
+    await chain.arun({"input": "Run 1"})
+
+    # Run 2: two tool calls. In-run compaction should compact only run-2 tool #1.
+    mock_run2 = MultiToolMockModel(tool_name="big_tool", num_calls=2)
+    chain.agent.model = mock_run2
+    await chain.arun({"input": "Run 2"})
+
+    ctx_tool_returns = collect_tool_returns(chain.history_manager.messages)
+    assert len(ctx_tool_returns) == 3
+
+    # Tool return order: run1#1, run2#1, run2#2
+    assert "... [Truncated due to length]" not in ctx_tool_returns[0].content
+    assert "... [Truncated due to length]" in ctx_tool_returns[1].content
+    assert "STEP_2_END" in ctx_tool_returns[2].content
+
+
 if __name__ == "__main__":
     if not os.getenv("OPENAI_API_KEY"):
         os.environ["OPENAI_API_KEY"] = "dummy"
@@ -392,4 +436,5 @@ if __name__ == "__main__":
     asyncio.run(test_in_run_start_iter_one_compacts_first_tool_output())
     asyncio.run(test_in_run_start_iter_two_does_not_compact_first_tool_output())
     asyncio.run(test_in_run_compaction_keeps_raw_audit_unmodified())
+    asyncio.run(test_in_run_compaction_does_not_touch_previous_runs())
     print("\n=== All in-run compaction tests passed ===")
