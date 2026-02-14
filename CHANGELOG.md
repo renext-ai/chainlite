@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.5](https://github.com/renext-ai/chainlite/compare/chainlite-v0.5.4...chainlite-v0.5.5) (2026-02-14)
+
+
+### Bug Fixes
+
+* Scope in-run compaction to only process messages from the current run. ([34047cd](https://github.com/renext-ai/chainlite/commit/34047cd7fc2d97c7b637613423eba1dbaef2d330))
+
 ## [0.5.4](https://github.com/renext-ai/chainlite/compare/chainlite-v0.5.3...chainlite-v0.5.4) (2026-02-14)
 
 
