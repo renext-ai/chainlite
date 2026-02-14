@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.4](https://github.com/renext-ai/chainlite/compare/chainlite-v0.5.3...chainlite-v0.5.4) (2026-02-14)
+
+
+### Features
+
+* Add runtime guards for sync API calls and refine in-run compaction configuration with type safety and validation. ([4ff95af](https://github.com/renext-ai/chainlite/commit/4ff95afd4c1655a4c678c5b50fcb6105e390d742))
+
+
+### Code Refactoring
+
+* Extract `_ensure_no_running_loop` into a new `async_utils` module and rename it to `ensure_no_running_loop`. ([a217003](https://github.com/renext-ai/chainlite/commit/a21700382baa74a5ec59dd061151f0e260bdb571))
+
 ## [0.5.3](https://github.com/renext-ai/chainlite/compare/chainlite-v0.5.2...chainlite-v0.5.3) (2026-02-14)
 
 
