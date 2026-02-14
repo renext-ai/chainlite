@@ -37,6 +37,7 @@ from ._factories import (
     create_agent_instance,
 )
 from .utils.media import build_prompt
+from .utils.async_utils import ensure_no_running_loop
 from .utils.output_model import (
     create_dynamic_pydantic_model,
     merge_dictionaries,
@@ -47,19 +48,6 @@ from .adapters.pydantic_ai import (
     is_call_tools_node,
     is_model_request_node,
 )
-
-
-def _ensure_no_running_loop(api_name: str) -> None:
-    """Raise a clear error for sync APIs called inside a running event loop."""
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return
-    raise RuntimeError(
-        f"{api_name} cannot be used while an event loop is running. "
-        "Use the async API instead."
-    )
-
 
 class ChainLite:
     """Main class for a ChainLite instance.
@@ -498,7 +486,7 @@ class ChainLite:
         Returns:
             The response from the language model, either as string or structured data.
         """
-        _ensure_no_running_loop("ChainLite.run")
+        ensure_no_running_loop("ChainLite.run")
         return asyncio.run(
             self._arun_core(
                 input_data,
@@ -541,7 +529,7 @@ class ChainLite:
         Yields:
             Text chunks from the streaming response.
         """
-        _ensure_no_running_loop("ChainLite.stream")
+        ensure_no_running_loop("ChainLite.stream")
         prompt, message_history = asyncio.run(self._prepare_run(input_data))
 
         # Get agent (potentially dynamic)

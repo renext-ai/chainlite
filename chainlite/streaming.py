@@ -20,22 +20,11 @@ from typing import (
 )
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.settings import ModelSettings
+from .utils.async_utils import ensure_no_running_loop
 
 if TYPE_CHECKING:
     from .core import ChainLite
     from .history import HistoryManager
-
-
-def _ensure_no_running_loop(api_name: str) -> None:
-    """Raise a clear error for sync APIs called inside a running event loop."""
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return
-    raise RuntimeError(
-        f"{api_name} cannot be used while an event loop is running. "
-        "Use the async API instead."
-    )
 
 
 class AgentStreamLike(Protocol):
@@ -236,7 +225,7 @@ class StreamRunner:
             return
 
         new_messages = result.new_messages()
-        _ensure_no_running_loop("StreamRunner._persist_history_sync")
+        ensure_no_running_loop("StreamRunner._persist_history_sync")
         asyncio.run(self._apply_stream_in_run_compaction_if_needed(new_messages, context))
         self._history_manager.add_messages(
             new_messages,
@@ -293,7 +282,7 @@ class StreamRunner:
     def stream_sync_from_async_generator(
         self, async_gen: AsyncGenerator[str, None]
     ) -> Generator[str, None, None]:
-        _ensure_no_running_loop("StreamRunner.stream_sync_from_async_generator")
+        ensure_no_running_loop("StreamRunner.stream_sync_from_async_generator")
         loop = asyncio.new_event_loop()
         old_loop = None
         try:
