@@ -6,7 +6,15 @@ LLM-powered applications with support for streaming, structured output, and
 conversation history.
 """
 
-from typing import Optional, Generator, AsyncGenerator, Dict, List, Any, Union
+from typing import (
+    Optional,
+    Generator,
+    AsyncGenerator,
+    Dict,
+    List,
+    Any,
+    Union,
+)
 import asyncio
 import traceback
 import json
@@ -22,6 +30,7 @@ from pydantic_ai.messages import ModelRequest, ToolReturnPart
 from .config import ChainLiteConfig
 from .provider import resolve_model_string
 from .history import HistoryManager
+from ._in_run_compaction import InRunCompactionTaskManager
 from .streaming import StreamProcessor
 from ._factories import (
     build_compaction_components,
@@ -303,6 +312,14 @@ class ChainLite:
         if tool_blocks < self._in_run_compaction_config["start_iter"]:
             return
 
+        await self._run_in_run_compaction(messages, context)
+
+    async def _run_in_run_compaction(
+        self,
+        messages: List[ModelMessage],
+        context: Optional[str],
+    ) -> None:
+        """Run in-run compaction over provided messages."""
         await self.history_manager.apply_in_run_compaction_to_previous_tool_results(
             messages,
             compactor=self._in_run_compactor,
@@ -311,34 +328,26 @@ class ChainLite:
             include_latest_tool_block=self._should_include_latest_for_in_run(),
         )
 
+    def _build_in_run_compaction_task_manager(
+        self, context: Optional[str]
+    ) -> InRunCompactionTaskManager:
+        """Create task manager bound to the current run context."""
+
+        async def _apply_in_run_compaction(messages: List[ModelMessage]) -> None:
+            await self._run_in_run_compaction(messages, context)
+
+        return InRunCompactionTaskManager(
+            start_iter=self._in_run_compaction_config["start_iter"],
+            apply_compaction=_apply_in_run_compaction,
+        )
+
     async def _arun_with_in_run_compaction(
         self, agent, prompt, message_history, model_settings, deps, context
     ):
         """Run agent with in-run compaction of previous tool results."""
         from pydantic_graph import End
 
-        tool_iter_count = 0
-        in_run_task: Optional[asyncio.Task] = None
-        in_run_refresh_requested = False
-
-        def _schedule_in_run_if_needed(messages: list) -> None:
-            nonlocal in_run_task, in_run_refresh_requested
-            if in_run_task is None or in_run_task.done():
-                in_run_task = asyncio.create_task(
-                    self.history_manager.apply_in_run_compaction_to_previous_tool_results(
-                        messages,
-                        compactor=self._in_run_compactor,
-                        context=context,
-                        max_concurrency=self._in_run_compaction_config.get(
-                            "max_concurrency", 4
-                        ),
-                        include_latest_tool_block=self._should_include_latest_for_in_run(),
-                    )
-                )
-                in_run_refresh_requested = False
-            else:
-                # Coalesce repeated triggers while one in-run task is in flight.
-                in_run_refresh_requested = True
+        task_manager = self._build_in_run_compaction_task_manager(context)
 
         async with agent.iter(
             prompt,
@@ -351,36 +360,12 @@ class ChainLite:
                 was_call_tools = is_call_tools_node(node)
                 node = await agent_run.next(node)
                 if was_call_tools:
-                    tool_iter_count += 1
-                    if (
-                        tool_iter_count
-                        >= self._in_run_compaction_config["start_iter"]
-                    ):
-                        _schedule_in_run_if_needed(agent_run.all_messages())
-
-                # If a pending refresh was requested while the previous task
-                # was running, immediately schedule another pass when it completes.
-                if (
-                    in_run_task is not None
-                    and in_run_task.done()
-                    and in_run_refresh_requested
-                ):
-                    _schedule_in_run_if_needed(agent_run.all_messages())
+                    task_manager.on_tool_iteration(agent_run.all_messages())
+                task_manager.on_progress(agent_run.all_messages())
 
             # Final synchronization: ensure outstanding in-run work is applied before
             # returning result so history persists the latest summarized state.
-            if in_run_task is not None:
-                await in_run_task
-            if in_run_refresh_requested:
-                await self.history_manager.apply_in_run_compaction_to_previous_tool_results(
-                    agent_run.all_messages(),
-                    compactor=self._in_run_compactor,
-                    context=context,
-                    max_concurrency=self._in_run_compaction_config.get(
-                        "max_concurrency", 4
-                    ),
-                    include_latest_tool_block=self._should_include_latest_for_in_run(),
-                )
+            await task_manager.flush(agent_run.all_messages())
 
         return agent_run.result
 
@@ -390,28 +375,9 @@ class ChainLite:
         """Stream via agent.iter so in-run compaction can happen mid-run."""
         from pydantic_graph import End
 
-        tool_iter_count = 0
-        in_run_task: Optional[asyncio.Task] = None
-        in_run_refresh_requested = False
         processor = StreamProcessor()
 
-        def _schedule_in_run_if_needed(messages: list) -> None:
-            nonlocal in_run_task, in_run_refresh_requested
-            if in_run_task is None or in_run_task.done():
-                in_run_task = asyncio.create_task(
-                    self.history_manager.apply_in_run_compaction_to_previous_tool_results(
-                        messages,
-                        compactor=self._in_run_compactor,
-                        context=context,
-                        max_concurrency=self._in_run_compaction_config.get(
-                            "max_concurrency", 4
-                        ),
-                        include_latest_tool_block=self._should_include_latest_for_in_run(),
-                    )
-                )
-                in_run_refresh_requested = False
-            else:
-                in_run_refresh_requested = True
+        task_manager = self._build_in_run_compaction_task_manager(context)
 
         async with agent.iter(
             prompt,
@@ -431,29 +397,10 @@ class ChainLite:
 
                 node = await agent_run.next(node)
                 if was_call_tools:
-                    tool_iter_count += 1
-                    if tool_iter_count >= self._in_run_compaction_config["start_iter"]:
-                        _schedule_in_run_if_needed(agent_run.all_messages())
+                    task_manager.on_tool_iteration(agent_run.all_messages())
+                task_manager.on_progress(agent_run.all_messages())
 
-                if (
-                    in_run_task is not None
-                    and in_run_task.done()
-                    and in_run_refresh_requested
-                ):
-                    _schedule_in_run_if_needed(agent_run.all_messages())
-
-            if in_run_task is not None:
-                await in_run_task
-            if in_run_refresh_requested:
-                await self.history_manager.apply_in_run_compaction_to_previous_tool_results(
-                    agent_run.all_messages(),
-                    compactor=self._in_run_compactor,
-                    context=context,
-                    max_concurrency=self._in_run_compaction_config.get(
-                        "max_concurrency", 4
-                    ),
-                    include_latest_tool_block=self._should_include_latest_for_in_run(),
-                )
+            await task_manager.flush(agent_run.all_messages())
 
             for chunk in processor.close():
                 yield chunk
@@ -711,7 +658,6 @@ class ChainLite:
             for chunk in processor.close():
                 yield chunk
 
-            # Update history after stream completes
             # Update history after stream completes
             if self.history_manager:
                 new_messages = result.new_messages()
