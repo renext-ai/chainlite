@@ -24,7 +24,7 @@ import jinja2
 from pydantic_ai import Agent, BinaryContent, ImageUrl
 from pydantic_ai.messages import ModelMessage
 
-from .compaction import CompactionManager
+from .compaction import CompactionManager, InRunCompactionConfig
 from .config import ChainLiteConfig
 from .config_loader import load_chainlite_from_yaml
 from .provider import resolve_model_string
@@ -47,6 +47,18 @@ from .adapters.pydantic_ai import (
     is_call_tools_node,
     is_model_request_node,
 )
+
+
+def _ensure_no_running_loop(api_name: str) -> None:
+    """Raise a clear error for sync APIs called inside a running event loop."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    raise RuntimeError(
+        f"{api_name} cannot be used while an event loop is running. "
+        "Use the async API instead."
+    )
 
 
 class ChainLite:
@@ -75,7 +87,7 @@ class ChainLite:
         self.exception_retry = 0
         self._truncator = None
         self._post_run_compaction_start_run = 1
-        self._in_run_compaction_config = None
+        self._in_run_compaction_config: Optional[InRunCompactionConfig] = None
         self._in_run_compactor = None
         self._run_count = 0
 
@@ -486,6 +498,7 @@ class ChainLite:
         Returns:
             The response from the language model, either as string or structured data.
         """
+        _ensure_no_running_loop("ChainLite.run")
         return asyncio.run(
             self._arun_core(
                 input_data,
@@ -528,6 +541,7 @@ class ChainLite:
         Yields:
             Text chunks from the streaming response.
         """
+        _ensure_no_running_loop("ChainLite.stream")
         prompt, message_history = asyncio.run(self._prepare_run(input_data))
 
         # Get agent (potentially dynamic)

@@ -67,7 +67,7 @@ class HistoryManager:
             if data_ctx:
                 adapter = TypeAdapter(List[ModelMessage])
                 self._messages = adapter.validate_json(data_ctx)
-                self._truncate_history(self._messages)
+                self._truncate_history()
 
             data_raw = self._redis_client.get(key_raw)
             if data_raw:
@@ -89,7 +89,7 @@ class HistoryManager:
             key_ctx = f"chainlite:history:{self.session_id}"
             key_raw = f"chainlite:history:raw:{self.session_id}"
 
-            self._truncate_history(self._messages)
+            self._truncate_history()
 
             adapter = TypeAdapter(List[ModelMessage])
             self._redis_client.set(key_ctx, adapter.dump_json(self._messages))
@@ -120,9 +120,7 @@ class HistoryManager:
         if isinstance(last_msg, (ModelRequest, ModelResponse)):
             has_tool_call = False
             for part in last_msg.parts:
-                if getattr(part, "part_kind", "") == "tool-call" or hasattr(
-                    part, "tool_name"
-                ):
+                if getattr(part, "part_kind", "") == "tool-call":
                     has_tool_call = True
                     break
             if has_tool_call:
@@ -145,7 +143,7 @@ class HistoryManager:
         else:
             self._messages.extend(messages)
 
-        self._truncate_history(self._messages)
+        self._truncate_history()
         if self._redis_client:
             self._save_to_redis()
 
@@ -167,7 +165,7 @@ class HistoryManager:
         else:
             self._messages.extend(messages)
 
-        self._truncate_history(self._messages)
+        self._truncate_history()
         if self._redis_client:
             self._save_to_redis()
 
@@ -244,13 +242,13 @@ class HistoryManager:
         for msg_id, new_parts in msg_parts_map.items():
             msg_obj_map[msg_id].parts = new_parts
 
-    def _truncate_history(self, messages_list: List[ModelMessage]) -> None:
-        """Smartly truncate history list to max_messages."""
-        if len(messages_list) <= self.max_messages:
+    def _truncate_history(self) -> None:
+        """Smartly truncate context history list to max_messages."""
+        if len(self._messages) <= self.max_messages:
             return
 
-        start_index = len(messages_list) - self.max_messages
-        candidate_messages = messages_list[start_index:]
+        start_index = len(self._messages) - self.max_messages
+        candidate_messages = self._messages[start_index:]
 
         safe_start_offset = 0
         for i, msg in enumerate(candidate_messages):
@@ -270,10 +268,7 @@ class HistoryManager:
                 safe_start_offset = i
                 break
 
-        # In-place update of the provided list is not possible like this,
-        # but the class usage currently expects self._messages to be updated.
-        if messages_list is self._messages:
-            self._messages = candidate_messages[safe_start_offset:]
+        self._messages = candidate_messages[safe_start_offset:]
 
     def clear(self) -> None:
         """Clear the message history."""

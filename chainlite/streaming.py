@@ -15,11 +15,45 @@ from typing import (
     Callable,
     Generator,
     Optional,
+    Protocol,
     TYPE_CHECKING,
 )
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.settings import ModelSettings
 
 if TYPE_CHECKING:
     from .core import ChainLite
+    from .history import HistoryManager
+
+
+def _ensure_no_running_loop(api_name: str) -> None:
+    """Raise a clear error for sync APIs called inside a running event loop."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    raise RuntimeError(
+        f"{api_name} cannot be used while an event loop is running. "
+        "Use the async API instead."
+    )
+
+
+class AgentStreamLike(Protocol):
+    def run_stream_sync(
+        self,
+        prompt: Any,
+        message_history: Optional[list[ModelMessage]],
+        model_settings: Optional[ModelSettings],
+        deps: Any,
+    ) -> Any: ...
+
+    def run_stream(
+        self,
+        prompt: Any,
+        message_history: Optional[list[ModelMessage]],
+        model_settings: Optional[ModelSettings],
+        deps: Any,
+    ) -> Any: ...
 
 
 async def stream_sse(
@@ -135,12 +169,12 @@ class StreamRunner:
     def __init__(
         self,
         *,
-        agent: Any,
-        model_settings: Any,
-        history_manager: Optional[Any],
+        agent: AgentStreamLike,
+        model_settings: Optional[ModelSettings],
+        history_manager: Optional["HistoryManager"],
         should_apply_post_run_compaction: Callable[[], bool],
         apply_stream_in_run_compaction_if_needed: Callable[
-            [list[Any], Optional[str]], Awaitable[None]
+            [list[ModelMessage], Optional[str]], Awaitable[None]
         ],
     ) -> None:
         self._agent = agent
@@ -202,6 +236,7 @@ class StreamRunner:
             return
 
         new_messages = result.new_messages()
+        _ensure_no_running_loop("StreamRunner._persist_history_sync")
         asyncio.run(self._apply_stream_in_run_compaction_if_needed(new_messages, context))
         self._history_manager.add_messages(
             new_messages,
@@ -224,7 +259,7 @@ class StreamRunner:
     def stream_sync(
         self,
         prompt: Any,
-        message_history: Optional[list[Any]],
+        message_history: Optional[list[ModelMessage]],
         deps: Any,
         context: Optional[str],
     ) -> Generator[str, None, None]:
@@ -241,7 +276,7 @@ class StreamRunner:
     async def stream_async(
         self,
         prompt: Any,
-        message_history: Optional[list[Any]],
+        message_history: Optional[list[ModelMessage]],
         deps: Any,
         context: Optional[str],
     ) -> AsyncGenerator[str, None]:
@@ -258,6 +293,7 @@ class StreamRunner:
     def stream_sync_from_async_generator(
         self, async_gen: AsyncGenerator[str, None]
     ) -> Generator[str, None, None]:
+        _ensure_no_running_loop("StreamRunner.stream_sync_from_async_generator")
         loop = asyncio.new_event_loop()
         old_loop = None
         try:

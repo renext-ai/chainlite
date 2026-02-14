@@ -1,4 +1,13 @@
-from typing import Optional, List, Dict, Any, Union, TYPE_CHECKING
+from typing import (
+    Optional,
+    List,
+    Dict,
+    Any,
+    Union,
+    TYPE_CHECKING,
+    Callable,
+    Awaitable,
+)
 import hashlib
 from loguru import logger
 from pydantic_ai.messages import (
@@ -68,6 +77,48 @@ class BaseHistoryTruncator:
         content = original_content if original_content is not None else part.content
         self._processed_tool_outputs[key] = self._content_hash(content)
 
+    def _process_messages_sync(
+        self,
+        messages: List[ModelMessage],
+        context: Optional[str],
+        process_part: Callable[[ToolReturnPart, Optional[str]], ToolReturnPart],
+    ) -> List[ModelMessage]:
+        new_messages: List[ModelMessage] = []
+        for msg in messages:
+            if isinstance(msg, ModelRequest):
+                new_parts = []
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        new_parts.append(process_part(part, context))
+                    else:
+                        new_parts.append(part)
+                new_messages.append(ModelRequest(parts=new_parts))
+            else:
+                new_messages.append(msg)
+        return new_messages
+
+    async def _process_messages_async(
+        self,
+        messages: List[ModelMessage],
+        context: Optional[str],
+        process_part: Callable[
+            [ToolReturnPart, Optional[str]], Awaitable[ToolReturnPart]
+        ],
+    ) -> List[ModelMessage]:
+        new_messages: List[ModelMessage] = []
+        for msg in messages:
+            if isinstance(msg, ModelRequest):
+                new_parts = []
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        new_parts.append(await process_part(part, context))
+                    else:
+                        new_parts.append(part)
+                new_messages.append(ModelRequest(parts=new_parts))
+            else:
+                new_messages.append(msg)
+        return new_messages
+
     async def atruncate(
         self, messages: List[ModelMessage], context: Optional[str] = None
     ) -> List[ModelMessage]:
@@ -117,32 +168,25 @@ class SimpleTruncator(BaseHistoryTruncator):
             return truncated_part
         return part
 
-    def _process_messages(self, messages: List[ModelMessage]) -> List[ModelMessage]:
-        new_messages = []
-        for msg in messages:
-            if isinstance(msg, ModelRequest):
-                new_parts = []
-                for part in msg.parts:
-                    if isinstance(part, ToolReturnPart):
-                        new_parts.append(self._truncate_part(part))
-                    else:
-                        new_parts.append(part)
-                new_messages.append(ModelRequest(parts=new_parts))
-            else:
-                new_messages.append(msg)
-        return new_messages
-
-    def truncate_part(self, part, context=None):
+    def truncate_part(
+        self, part: ToolReturnPart, context: Optional[str] = None
+    ) -> ToolReturnPart:
         return self._truncate_part(part)
 
-    async def atruncate_part(self, part, context=None):
+    async def atruncate_part(
+        self, part: ToolReturnPart, context: Optional[str] = None
+    ) -> ToolReturnPart:
         return self._truncate_part(part)
 
-    def truncate(self, messages, context=None):
-        return self._process_messages(messages)
+    def truncate(
+        self, messages: List[ModelMessage], context: Optional[str] = None
+    ) -> List[ModelMessage]:
+        return self._process_messages_sync(messages, context, self.truncate_part)
 
-    async def atruncate(self, messages, context=None):
-        return self._process_messages(messages)
+    async def atruncate(
+        self, messages: List[ModelMessage], context: Optional[str] = None
+    ) -> List[ModelMessage]:
+        return await self._process_messages_async(messages, context, self.atruncate_part)
 
 
 class AutoSummarizer(BaseHistoryTruncator):
@@ -237,44 +281,25 @@ class AutoSummarizer(BaseHistoryTruncator):
             return summarized_part
         return part
 
-    async def atruncate_part(self, part, context=None):
+    async def atruncate_part(
+        self, part: ToolReturnPart, context: Optional[str] = None
+    ) -> ToolReturnPart:
         return await self._summarize_part_async(part, context)
 
-    def truncate_part(self, part, context=None):
+    def truncate_part(
+        self, part: ToolReturnPart, context: Optional[str] = None
+    ) -> ToolReturnPart:
         return self._summarize_part_sync(part, context)
 
-    async def atruncate(self, messages, context=None):
-        new_messages = []
-        for msg in messages:
-            if isinstance(msg, ModelRequest):
-                new_parts = []
-                for part in msg.parts:
-                    if isinstance(part, ToolReturnPart):
-                        # Await the async summarization
-                        new_parts.append(
-                            await self._summarize_part_async(part, context)
-                        )
-                    else:
-                        new_parts.append(part)
-                new_messages.append(ModelRequest(parts=new_parts))
-            else:
-                new_messages.append(msg)
-        return new_messages
+    async def atruncate(
+        self, messages: List[ModelMessage], context: Optional[str] = None
+    ) -> List[ModelMessage]:
+        return await self._process_messages_async(messages, context, self.atruncate_part)
 
-    def truncate(self, messages, context=None):
-        new_messages = []
-        for msg in messages:
-            if isinstance(msg, ModelRequest):
-                new_parts = []
-                for part in msg.parts:
-                    if isinstance(part, ToolReturnPart):
-                        new_parts.append(self._summarize_part_sync(part, context))
-                    else:
-                        new_parts.append(part)
-                new_messages.append(ModelRequest(parts=new_parts))
-            else:
-                new_messages.append(msg)
-        return new_messages
+    def truncate(
+        self, messages: List[ModelMessage], context: Optional[str] = None
+    ) -> List[ModelMessage]:
+        return self._process_messages_sync(messages, context, self.truncate_part)
 
 
 class ChainLiteSummarizer(BaseHistoryTruncator):
@@ -333,12 +358,6 @@ class ChainLiteSummarizer(BaseHistoryTruncator):
             )
             # Ensure proper sync execution
             try:
-                import asyncio
-
-                # If there's an existing loop, use it? No, run() is strictly sync blocking.
-                # Use Runner sync method if available, or create new loop if none exists.
-                # However, pydantic-ai might not support run() from async context.
-                # But here we are in truncate() which is sync.
                 summary = self.summarizer.run({"input": prompt})
             except RuntimeError as e:
                 # Fallback if somehow called from async context unexpectedly
@@ -356,43 +375,25 @@ class ChainLiteSummarizer(BaseHistoryTruncator):
             return summarized_part
         return part
 
-    async def atruncate_part(self, part, context=None):
+    async def atruncate_part(
+        self, part: ToolReturnPart, context: Optional[str] = None
+    ) -> ToolReturnPart:
         return await self._summarize_part_async(part, context)
 
-    def truncate_part(self, part, context=None):
+    def truncate_part(
+        self, part: ToolReturnPart, context: Optional[str] = None
+    ) -> ToolReturnPart:
         return self._summarize_part_sync(part, context)
 
-    async def atruncate(self, messages, context=None):
-        new_messages = []
-        for msg in messages:
-            if isinstance(msg, ModelRequest):
-                new_parts = []
-                for part in msg.parts:
-                    if isinstance(part, ToolReturnPart):
-                        new_parts.append(
-                            await self._summarize_part_async(part, context)
-                        )
-                    else:
-                        new_parts.append(part)
-                new_messages.append(ModelRequest(parts=new_parts))
-            else:
-                new_messages.append(msg)
-        return new_messages
+    async def atruncate(
+        self, messages: List[ModelMessage], context: Optional[str] = None
+    ) -> List[ModelMessage]:
+        return await self._process_messages_async(messages, context, self.atruncate_part)
 
-    def truncate(self, messages, context=None):
-        new_messages = []
-        for msg in messages:
-            if isinstance(msg, ModelRequest):
-                new_parts = []
-                for part in msg.parts:
-                    if isinstance(part, ToolReturnPart):
-                        new_parts.append(self._summarize_part_sync(part, context))
-                    else:
-                        new_parts.append(part)
-                new_messages.append(ModelRequest(parts=new_parts))
-            else:
-                new_messages.append(msg)
-        return new_messages
+    def truncate(
+        self, messages: List[ModelMessage], context: Optional[str] = None
+    ) -> List[ModelMessage]:
+        return self._process_messages_sync(messages, context, self.truncate_part)
 
 
 # Backward-compatible aliases for earlier misspelled public names.

@@ -9,13 +9,16 @@ from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings
 
 from .adapters.pydantic_ai import get_agent_tools
+from .compaction import InRunCompactionConfig
 
 
-def build_compaction_components(config: Any) -> tuple[Any, int, Optional[dict[str, Any]], Any]:
+def build_compaction_components(
+    config: Any,
+) -> tuple[Any, int, Optional[InRunCompactionConfig], Any]:
     """Build post-run and in-run compaction components from config."""
     truncator = None
     post_run_compaction_start_run = 1
-    in_run_compaction_config: Optional[dict[str, Any]] = None
+    in_run_compaction_config: Optional[InRunCompactionConfig] = None
     in_run_compactor = None
 
     if not config.history_truncator_config:

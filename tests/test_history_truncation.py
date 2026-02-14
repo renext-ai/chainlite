@@ -1,7 +1,7 @@
 import asyncio
 from chainlite import ChainLite, ChainLiteConfig
 from chainlite.truncators import SimpleTruncator
-from pydantic_ai.messages import ModelRequest, ToolReturnPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, ToolReturnPart, UserPromptPart, ToolCallPart
 import os
 
 
@@ -59,20 +59,36 @@ async def test_auto_summarization():
     msgs = [
         ModelRequest(
             parts=[
+                UserPromptPart(content="Tell me about US GDP.")
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name="info_tool",
+                    args={},
+                    tool_call_id="call_2",
+                )
+            ]
+        ),
+        ModelRequest(
+            parts=[
                 ToolReturnPart(
                     tool_name="info_tool", content=long_content, tool_call_id="call_2"
                 )
             ]
-        )
+        ),
     ]
 
     print("Requesting auto-summarization (this calls LLM)...")
     await cl.history_manager.add_messages_async(msgs, context="Tell me about US GDP.")
 
     ctx_history = cl.history_manager.messages
-    print(f"Summarized content: {ctx_history[0].parts[0].content}")
+    # Messages: [0] UserPrompt, [1] ToolCall response, [2] ToolReturn (summarized)
+    summarized_part = ctx_history[2].parts[0]
+    print(f"Summarized content: {summarized_part.content}")
 
-    assert "[Summarized Output]" in ctx_history[0].parts[0].content
+    assert "[Summarized Output]" in summarized_part.content
     print("PASS: Auto summarization verified.")
 
 

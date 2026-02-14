@@ -1,8 +1,27 @@
 import asyncio
 import copy
-from typing import Awaitable, Callable, Dict, List, Optional
+from typing import Awaitable, Callable, Dict, List, Optional, Protocol, TypedDict
+from loguru import logger
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
+from .truncators import BaseHistoryTruncator
+
+
+class InRunCompactionConfig(TypedDict):
+    start_iter: int
+    start_run: int
+    max_concurrency: int
+
+
+class HistoryManagerLike(Protocol):
+    async def apply_in_run_compaction_to_previous_tool_results(
+        self,
+        messages: List[ModelMessage],
+        compactor: BaseHistoryTruncator,
+        context: Optional[str] = None,
+        max_concurrency: int = 4,
+        include_latest_tool_block: bool = False,
+    ) -> None: ...
 
 
 class InRunCompactionTaskManager:
@@ -57,9 +76,9 @@ class CompactionManager:
     def __init__(
         self,
         *,
-        history_manager: Optional[object],
-        config: Optional[dict],
-        compactor: Optional[object],
+        history_manager: Optional[HistoryManagerLike],
+        config: Optional[InRunCompactionConfig],
+        compactor: Optional[BaseHistoryTruncator],
         post_run_start: int,
     ) -> None:
         self.history_manager = history_manager
@@ -71,12 +90,21 @@ class CompactionManager:
         return run_count >= self.post_run_start
 
     def should_use_in_run(self, run_count: int) -> bool:
-        return (
-            self.history_manager is not None
-            and self.config is not None
-            and self.compactor is not None
-            and run_count >= self.config["start_run"]
-        )
+        if (
+            self.history_manager is None
+            or self.config is None
+            or self.compactor is None
+        ):
+            return False
+
+        start_run = self.config.get("start_run")
+        if not isinstance(start_run, int):
+            logger.warning(
+                "Invalid in-run compaction config: 'start_run' must be int, got {}",
+                type(start_run).__name__,
+            )
+            return False
+        return run_count >= start_run
 
     def _count_tool_result_blocks(self, messages: List[ModelMessage]) -> int:
         count = 0
@@ -88,7 +116,16 @@ class CompactionManager:
         return count
 
     def _should_include_latest_for_in_run(self) -> bool:
-        return self.config is not None and int(self.config.get("start_iter", 2)) <= 1
+        if self.config is None:
+            return False
+        start_iter = self.config.get("start_iter", 2)
+        if not isinstance(start_iter, int):
+            logger.warning(
+                "Invalid in-run compaction config: 'start_iter' must be int, got {}",
+                type(start_iter).__name__,
+            )
+            return False
+        return start_iter <= 1
 
     @staticmethod
     def _tool_part_key(part: ToolReturnPart) -> str:
@@ -157,7 +194,11 @@ class CompactionManager:
             messages,
             compactor=self.compactor,
             context=context,
-            max_concurrency=self.config.get("max_concurrency", 4),
+            max_concurrency=(
+                self.config.get("max_concurrency", 4)
+                if isinstance(self.config.get("max_concurrency", 4), int)
+                else 4
+            ),
             include_latest_tool_block=self._should_include_latest_for_in_run(),
         )
 
@@ -166,12 +207,15 @@ class CompactionManager:
     ) -> InRunCompactionTaskManager:
         if self.config is None:
             raise ValueError("In-run compaction config is not available")
+        start_iter = self.config.get("start_iter")
+        if not isinstance(start_iter, int):
+            raise ValueError("Invalid in-run compaction config: 'start_iter' must be int")
 
         async def _apply_in_run_compaction(messages: List[ModelMessage]) -> None:
             await self.run_in_run_compaction(messages, context, raw_snapshot=raw_snapshot)
 
         return InRunCompactionTaskManager(
-            start_iter=self.config["start_iter"],
+            start_iter=start_iter,
             apply_compaction=_apply_in_run_compaction,
         )
 
@@ -188,8 +232,16 @@ class CompactionManager:
         if self.config is None:
             return
 
+        start_iter = self.config.get("start_iter")
+        if not isinstance(start_iter, int):
+            logger.warning(
+                "Invalid in-run compaction config: 'start_iter' must be int, got {}",
+                type(start_iter).__name__,
+            )
+            return
+
         tool_blocks = self._count_tool_result_blocks(messages)
-        if tool_blocks < self.config["start_iter"]:
+        if tool_blocks < start_iter:
             return
 
         await self.run_in_run_compaction(messages, context, raw_snapshot=raw_snapshot)
