@@ -1,5 +1,6 @@
 from typing import Optional, List, Dict, Any, Union, TYPE_CHECKING
 import hashlib
+from loguru import logger
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -179,6 +180,12 @@ class AutoSummarizer(BaseHistoryTruncator):
             original_content = part.content
             summarizer = self._get_summarizer()
             prompt = f"User Question: {context}\n\nTool Output: {part.content}"
+            logger.info(
+                "AutoSummarizer async call: model={}, tool={}, content_len={}",
+                self.model_name,
+                part.tool_name,
+                len(part.content),
+            )
             # Use agent.run() directly to capture usage
             result = await summarizer.agent.run(prompt)
             summary = result.output
@@ -205,6 +212,12 @@ class AutoSummarizer(BaseHistoryTruncator):
             original_content = part.content
             summarizer = self._get_summarizer()
             prompt = f"User Question: {context}\n\nTool Output: {part.content}"
+            logger.info(
+                "AutoSummarizer sync call: model={}, tool={}, content_len={}",
+                self.model_name,
+                part.tool_name,
+                len(part.content),
+            )
             # Use agent.run_sync() directly to capture usage
             result = summarizer.agent.run_sync(prompt)
             summary = result.output
@@ -289,6 +302,11 @@ class ChainLiteSummarizer(BaseHistoryTruncator):
         if self._should_process_tool_part(part, min_length=self.threshold):
             original_content = part.content
             prompt = f"User Question: {context}\n\nTool Output: {part.content}"
+            logger.info(
+                "ChainLiteSummarizer async call: tool={}, content_len={}",
+                part.tool_name,
+                len(part.content),
+            )
             summary = await self.summarizer.arun({"input": prompt})
             summarized_part = ToolReturnPart(
                 tool_name=part.tool_name,
@@ -308,6 +326,11 @@ class ChainLiteSummarizer(BaseHistoryTruncator):
         if self._should_process_tool_part(part, min_length=self.threshold):
             original_content = part.content
             prompt = f"User Question: {context}\n\nTool Output: {part.content}"
+            logger.info(
+                "ChainLiteSummarizer sync call: tool={}, content_len={}",
+                part.tool_name,
+                len(part.content),
+            )
             # Ensure proper sync execution
             try:
                 import asyncio

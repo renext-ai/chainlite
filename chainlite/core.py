@@ -18,7 +18,6 @@ from typing import (
 import asyncio
 import traceback
 from loguru import logger
-import yaml
 from pydantic import BaseModel
 import jinja2
 
@@ -27,6 +26,7 @@ from pydantic_ai.messages import ModelMessage
 
 from .compaction import CompactionManager
 from .config import ChainLiteConfig
+from .config_loader import load_chainlite_from_yaml
 from .provider import resolve_model_string
 from .history import HistoryManager
 from .streaming import StreamProcessor, StreamRunner
@@ -120,7 +120,9 @@ class ChainLite:
             )
             # Set initial system prompt if agent is already set up (unlikely here but for safety)
             if self.agent:
-                self.history_manager.system_prompt = build_full_system_prompt(self.agent)
+                self.history_manager.system_prompt = build_full_system_prompt(
+                    self.agent
+                )
 
         self.compaction_manager = CompactionManager(
             history_manager=self.history_manager,
@@ -154,6 +156,11 @@ class ChainLite:
         self.compaction_manager.config = self._in_run_compaction_config
         self.compaction_manager.compactor = self._in_run_compactor
         self.compaction_manager.post_run_start = self._post_run_compaction_start_run
+
+    def _require_compaction_manager(self) -> CompactionManager:
+        if self.compaction_manager is None:
+            raise RuntimeError("Compaction manager is not initialized")
+        return self.compaction_manager
 
     def _create_agent(self, instructions: Optional[str]) -> Agent:
         """Create an agent instance with the given instructions."""
@@ -206,6 +213,7 @@ class ChainLite:
         Optional[List[ModelMessage]],
     ]:
         """Prepare for agent run: build prompt and get history."""
+        self._sync_compaction_manager()
         if self.agent is None:
             raise ValueError(
                 "Agent is not set up. Please call `setup_chain` method before running."
@@ -229,14 +237,12 @@ class ChainLite:
         raw_messages: Optional[List[ModelMessage]] = None,
     ) -> Union[str, Dict[str, Any]]:
         """Process agent run result: update history and dump output."""
-        self._sync_compaction_manager()
+        compaction_manager = self._require_compaction_manager()
         if self.history_manager:
             self.history_manager.add_messages(
                 result.new_messages(),
                 context=context,
-                apply_truncation=self.compaction_manager.should_apply_post_run(
-                    self._run_count
-                ),
+                apply_truncation=compaction_manager.should_apply_post_run(self._run_count),
                 raw_messages=raw_messages,
             )
 
@@ -252,14 +258,12 @@ class ChainLite:
         raw_messages: Optional[List[ModelMessage]] = None,
     ) -> Union[str, Dict[str, Any]]:
         """Process agent run result asynchronously."""
-        self._sync_compaction_manager()
+        compaction_manager = self._require_compaction_manager()
         if self.history_manager:
             await self.history_manager.add_messages_async(
                 result.new_messages(),
                 context=context,
-                apply_truncation=self.compaction_manager.should_apply_post_run(
-                    self._run_count
-                ),
+                apply_truncation=compaction_manager.should_apply_post_run(self._run_count),
                 raw_messages=raw_messages,
             )
 
@@ -303,9 +307,9 @@ class ChainLite:
         """Run agent with in-run compaction of previous tool results."""
         from pydantic_graph import End
 
-        self._sync_compaction_manager()
+        compaction_manager = self._require_compaction_manager()
         raw_snapshot: dict[str, str] = {}
-        task_manager = self.compaction_manager.build_task_manager(
+        task_manager = compaction_manager.build_task_manager(
             context, raw_snapshot=raw_snapshot
         )
 
@@ -327,7 +331,7 @@ class ChainLite:
             # returning result so history persists the latest summarized state.
             await task_manager.flush(agent_run.all_messages())
 
-        raw_messages = self.compaction_manager.restore_raw_messages_from_snapshot(
+        raw_messages = compaction_manager.restore_raw_messages_from_snapshot(
             agent_run.result.new_messages(),
             raw_snapshot,
         )
@@ -339,11 +343,11 @@ class ChainLite:
         """Stream via agent.iter so in-run compaction can happen mid-run."""
         from pydantic_graph import End
 
-        self._sync_compaction_manager()
+        compaction_manager = self._require_compaction_manager()
         processor = StreamProcessor()
 
         raw_snapshot: dict[str, str] = {}
-        task_manager = self.compaction_manager.build_task_manager(
+        task_manager = compaction_manager.build_task_manager(
             context, raw_snapshot=raw_snapshot
         )
 
@@ -374,30 +378,30 @@ class ChainLite:
                 yield chunk
 
             if self.history_manager and agent_run.result is not None:
-                raw_messages = self.compaction_manager.restore_raw_messages_from_snapshot(
-                    agent_run.result.new_messages(),
-                    raw_snapshot,
+                raw_messages = (
+                    compaction_manager.restore_raw_messages_from_snapshot(
+                        agent_run.result.new_messages(),
+                        raw_snapshot,
+                    )
                 )
                 await self.history_manager.add_messages_async(
                     agent_run.result.new_messages(),
                     context=context,
-                    apply_truncation=self.compaction_manager.should_apply_post_run(
-                        self._run_count
-                    ),
+                    apply_truncation=compaction_manager.should_apply_post_run(self._run_count),
                     raw_messages=raw_messages,
                 )
 
     def _build_stream_runner(self, agent: Agent) -> StreamRunner:
         """Create a stream runner for a single prepared run."""
-        self._sync_compaction_manager()
+        compaction_manager = self._require_compaction_manager()
         return StreamRunner(
             agent=agent,
             model_settings=self._model_settings,
             history_manager=self.history_manager,
-            should_apply_post_run_compaction=lambda: self.compaction_manager.should_apply_post_run(
+            should_apply_post_run_compaction=lambda: compaction_manager.should_apply_post_run(
                 self._run_count
             ),
-            apply_stream_in_run_compaction_if_needed=lambda messages, context: self.compaction_manager.apply_stream_compaction_if_needed(
+            apply_stream_in_run_compaction_if_needed=lambda messages, context: compaction_manager.apply_stream_compaction_if_needed(
                 messages,
                 context,
                 self._run_count,
@@ -414,7 +418,6 @@ class ChainLite:
         use_async_result_processing: bool,
     ) -> Union[str, Dict[str, Any]]:
         """Shared async core for run/arun execution flow."""
-        self._sync_compaction_manager()
         prompt, message_history = await self._prepare_run(input_data)
 
         # Get agent (potentially dynamic)
@@ -427,15 +430,18 @@ class ChainLite:
 
         while True:
             try:
+                compaction_manager = self._require_compaction_manager()
                 raw_messages_override = None
-                if self.compaction_manager.should_use_in_run(self._run_count):
-                    result, raw_messages_override = await self._arun_with_in_run_compaction(
-                        agent,
-                        prompt,
-                        message_history,
-                        self._model_settings,
-                        deps,
-                        input_str,
+                if compaction_manager.should_use_in_run(self._run_count):
+                    result, raw_messages_override = (
+                        await self._arun_with_in_run_compaction(
+                            agent,
+                            prompt,
+                            message_history,
+                            self._model_settings,
+                            deps,
+                            input_str,
+                        )
                     )
                 else:
                     result = await agent.run(
@@ -522,7 +528,6 @@ class ChainLite:
         Yields:
             Text chunks from the streaming response.
         """
-        self._sync_compaction_manager()
         prompt, message_history = asyncio.run(self._prepare_run(input_data))
 
         # Get agent (potentially dynamic)
@@ -530,8 +535,9 @@ class ChainLite:
         self._run_count += 1
         input_str = input_data.get("input") or str(prompt)
         stream_runner = self._build_stream_runner(agent)
+        compaction_manager = self._require_compaction_manager()
 
-        if self.compaction_manager.should_use_in_run(self._run_count):
+        if compaction_manager.should_use_in_run(self._run_count):
             async_gen = self._astream_with_in_run_compaction(
                 agent,
                 prompt,
@@ -558,14 +564,14 @@ class ChainLite:
         Asynchronously processes input data through the agent, yielding text chunks.
         Uses _StreamProcessor to handle part transitions and inject headers/tags.
         """
-        self._sync_compaction_manager()
         prompt, message_history = await self._prepare_run(input_data)
         agent = await self._get_agent_for_run(input_data)
         self._run_count += 1
         input_str = input_data.get("input") or str(prompt)
         stream_runner = self._build_stream_runner(agent)
+        compaction_manager = self._require_compaction_manager()
 
-        if self.compaction_manager.should_use_in_run(self._run_count):
+        if compaction_manager.should_use_in_run(self._run_count):
             async for chunk in self._astream_with_in_run_compaction(
                 agent,
                 prompt,
@@ -599,13 +605,4 @@ class ChainLite:
         Returns:
             A ChainLite instance initialized with the settings from the YAML file.
         """
-        with open(yaml_file_path, "r", encoding="utf-8") as yaml_file:
-            yaml_data = yaml.load(yaml_file, Loader=yaml.FullLoader)
-
-        if custom_configs is not None:
-            yaml_data.update(custom_configs)
-
-        if yaml_data.get("config_name") is None:
-            yaml_data["config_name"] = str(yaml_file_path)
-
-        return ChainLite(ChainLiteConfig(**yaml_data))
+        return load_chainlite_from_yaml(yaml_file_path, custom_configs)
