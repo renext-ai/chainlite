@@ -1,7 +1,12 @@
-"""Compatibility helpers for pydantic-ai public/private API differences."""
+"""Compatibility helpers for pydantic-ai public/private API differences.
+
+This adapter intentionally centralizes access to unstable/private pydantic-ai
+internals so version drift can be fixed in one place.
+"""
 
 from __future__ import annotations
 
+import json
 from typing import Any, Optional
 
 
@@ -55,6 +60,38 @@ def get_agent_instructions(agent: Optional[Any]) -> list[str]:
         return []
 
     return [str(item) for item in instructions]
+
+
+def build_full_system_prompt(agent: Optional[Any]) -> str:
+    """Build a system prompt string with instructions and tool schemas."""
+    if not agent:
+        return ""
+
+    lines: list[str] = []
+
+    instructions = get_agent_instructions(agent)
+    if instructions:
+        lines.append("## Instructions\n")
+        for inst in instructions:
+            lines.append(f"{inst}\n")
+
+    tool_schemas = get_agent_tool_schemas(agent)
+    if tool_schemas:
+        if lines:
+            lines.append("\n")
+        lines.append("## Tools\n")
+        for schema_data in tool_schemas:
+            name = schema_data.get("name", "unknown")
+            description = schema_data.get("description")
+            lines.append(f"\n### Tool: {name}")
+            if description:
+                lines.append(f"**Description**: {description}")
+
+            lines.append("```json")
+            lines.append(json.dumps(schema_data, indent=2, ensure_ascii=False))
+            lines.append("```")
+
+    return "\n".join(lines)
 
 
 def is_call_tools_node(node: Any) -> bool:

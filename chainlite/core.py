@@ -17,7 +17,6 @@ from typing import (
 )
 import asyncio
 import traceback
-import json
 from loguru import logger
 import yaml
 from pydantic import BaseModel
@@ -44,8 +43,7 @@ from .utils.output_model import (
 )
 from .utils.prompts import parse_input_variables_from_prompt
 from .adapters.pydantic_ai import (
-    get_agent_instructions,
-    get_agent_tool_schemas,
+    build_full_system_prompt,
     is_call_tools_node,
     is_model_request_node,
 )
@@ -122,13 +120,24 @@ class ChainLite:
             )
             # Set initial system prompt if agent is already set up (unlikely here but for safety)
             if self.agent:
-                self.history_manager.system_prompt = self._get_full_system_prompt()
+                self.history_manager.system_prompt = build_full_system_prompt(self.agent)
 
         self.compaction_manager = CompactionManager(
             history_manager=self.history_manager,
             config=self._in_run_compaction_config,
             compactor=self._in_run_compactor,
             post_run_start=self._post_run_compaction_start_run,
+        )
+
+        # Build system instructions
+        instructions = self._build_instructions()
+
+        self._model_settings = build_model_settings(self.config)
+        self.agent = create_agent_instance(
+            model_string=model_string,
+            instructions=instructions,
+            output_model=self.output_model,
+            retries=self.config.max_retries or 3,
         )
 
     def _sync_compaction_manager(self) -> None:
@@ -145,17 +154,6 @@ class ChainLite:
         self.compaction_manager.config = self._in_run_compaction_config
         self.compaction_manager.compactor = self._in_run_compactor
         self.compaction_manager.post_run_start = self._post_run_compaction_start_run
-
-        # Build system instructions
-        instructions = self._build_instructions()
-
-        self._model_settings = build_model_settings(self.config)
-        self.agent = create_agent_instance(
-            model_string=model_string,
-            instructions=instructions,
-            output_model=self.output_model,
-            retries=self.config.max_retries or 3,
-        )
 
     def _create_agent(self, instructions: Optional[str]) -> Agent:
         """Create an agent instance with the given instructions."""
@@ -215,7 +213,7 @@ class ChainLite:
 
         # Ensure HistoryManager has the full system prompt (including dynamically added tools)
         if self.history_manager and not self.history_manager.system_prompt:
-            self.history_manager.system_prompt = self._get_full_system_prompt()
+            self.history_manager.system_prompt = build_full_system_prompt(self.agent)
 
         prompt = await self._build_prompt(input_data)
         if self.history_manager and self.history_manager.messages:
@@ -553,37 +551,6 @@ class ChainLite:
             input_str,
         ):
             yield chunk
-
-    def _get_full_system_prompt(self) -> str:
-        """Extract instructions and tool definitions from the agent."""
-        if not self.agent:
-            return ""
-
-        lines = []
-        # 1. Instructions
-        instructions = get_agent_instructions(self.agent)
-        if instructions:
-            lines.append("## Instructions\n")
-            for inst in instructions:
-                lines.append(f"{inst}\n")
-
-        # 2. Tools
-        tool_schemas = get_agent_tool_schemas(self.agent)
-        if tool_schemas:
-            if lines:
-                lines.append("\n")
-            lines.append("## Tools\n")
-            for schema_data in tool_schemas:
-                name = schema_data.get("name", "unknown")
-                description = schema_data.get("description")
-                lines.append(f"\n### Tool: {name}")
-                if description:
-                    lines.append(f"**Description**: {description}")
-
-                lines.append("```json")
-                lines.append(json.dumps(schema_data, indent=2, ensure_ascii=False))
-                lines.append("```")
-        return "\n".join(lines)
 
     @staticmethod
     def load_config_from_yaml(
