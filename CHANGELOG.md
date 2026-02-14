@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.3](https://github.com/renext-ai/chainlite/compare/chainlite-v0.5.2...chainlite-v0.5.3) (2026-02-14)
+
+
+### Features
+
+* Preserve original messages in raw history while applying compaction to context history. ([8a12b0d](https://github.com/renext-ai/chainlite/commit/8a12b0dee9c631d9a290efdae05402669b094071))
+
+
+### Code Refactoring
+
+* Extract YAML configuration loading to a dedicated module and refine compaction manager access. ([44f9b80](https://github.com/renext-ai/chainlite/commit/44f9b804301ae6ed53d59182868ae9a62561b056))
+
 ## [0.5.2](https://github.com/renext-ai/chainlite/compare/chainlite-v0.5.1...chainlite-v0.5.2) (2026-02-13)
 
 
